@@ -1,0 +1,21 @@
+import streamlit as st
+
+def folder_grid():
+    cols = st.columns(4)
+
+    for i in range(8):
+        with cols[i % 4]:
+            st.markdown(
+                f"""
+                <div style="
+                    border:1px solid #ddd;
+                    border-radius:10px;
+                    padding:20px;
+                    margin:10px;
+                    text-align:center;">
+                    📁<br>
+                    <b>Folder {i+1}</b>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
