@@ -4,19 +4,17 @@ import streamlit as st
 # STORAGE CALCULATION
 # ==============================
 def calculate_storage():
-    TOTAL_LIMIT_MB = 500  # Employee limit
+    TOTAL_LIMIT_MB = 500
 
     total_bytes = 0
 
     if "projects" in st.session_state:
         for project in st.session_state.projects.values():
 
-            # RAW Files
             for category in project["RAW Files"].values():
                 for f in category:
                     total_bytes += f.size
 
-            # Edited Files
             for f in project["Edited Files"]:
                 total_bytes += f.size
 
@@ -34,7 +32,6 @@ def show_employee_dashboard():
     # 🔥 LOGOUT
     col1, col2 = st.columns([8, 1])
     with col2:
-        st.markdown("###")
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state.role = None
             st.rerun()
@@ -42,29 +39,16 @@ def show_employee_dashboard():
     st.title("🧑‍💻 Employee Dashboard")
 
     # ==============================
-    # 💾 STORAGE OVERVIEW
+    # 💾 STORAGE
     # ==============================
     used, left, total = calculate_storage()
 
     col1, col2 = st.columns(2)
+    col1.metric("💾 Storage Used", f"{used} MB")
+    col2.metric("📦 Storage Left", f"{left} MB / {total} MB")
 
-    with col1:
-        st.metric("💾 Storage Used", f"{used} MB")
-
-    with col2:
-        st.metric("📦 Storage Left", f"{left} MB / {total} MB")
-
-    # Progress bar
     percent = used / total if total != 0 else 0
     st.progress(percent)
-
-    # Status
-    if percent < 0.5:
-        st.success("🟢 Storage healthy")
-    elif percent < 0.8:
-        st.warning("🟡 Moderate usage")
-    else:
-        st.error("🔴 Storage nearly full")
 
     st.divider()
 
@@ -73,45 +57,126 @@ def show_employee_dashboard():
     # ==============================
     tab1, tab2 = st.tabs(["📂 Current Project", "📤 Upload Edited Files"])
 
-    # -----------------------------
-    # TAB 1 — CURRENT PROJECT
-    # -----------------------------
+    # ==============================
+    # TAB 1 — PROJECT VIEW
+    # ==============================
     with tab1:
-        st.subheader("📌 Assigned Project")
 
-        st.info("""
-        **Project Name:** Marketing Video Campaign  
-        **Description:** Social media ad campaign editing  
-        **Assigned By:** Project Manager – Ashwini Bhagat
-        """)
+        # ✅ FIXED PROJECT STRUCTURE
+        projects = {
+            "Marketing Video Campaign": {
+                "description": "Social media ad campaign editing",
+                "assigned_by": "Ashwini Bhagat",
 
-        st.markdown("---")
-        st.subheader("📥 RAW Files to Work On")
+                "files": [
+                    ("intro_raw.mp4", "Video"),
+                    ("background_music.wav", "Audio"),
+                    ("product_images.zip", "Images"),
+                    ("brand_guidelines.pdf", "Document")
+                ],
 
-        files = [
-            ("intro_raw.mp4", "Video"),
-            ("background_music.wav", "Audio"),
-            ("product_images.zip", "Images"),
-            ("brand_guidelines.pdf", "Document")
-        ]
+                "Edited Files": [
+                    "intro_video.mp4"
+                ],
 
-        for file, ftype in files:
-            col1, col2 = st.columns([4,1])
-            col1.write(f"📄 {file} — {ftype}")
-            col2.download_button(
-                "⬇ Download",
-                data=b"Sample file data",
-                file_name=file
-            )
+                "Comments": [
+                    {
+                        "file": "intro_video.mp4",
+                        "comment": "Reduce brightness",
+                        "by": "Client"
+                    },
+                    {
+                        "file": "intro_video.mp4",
+                        "comment": "Add transition",
+                        "by": "Project Manager"
+                    }
+                ]
+            },
 
-    # -----------------------------
-    # TAB 2 — UPLOAD EDITED FILES
-    # -----------------------------
+            "Website UI Design": {
+                "description": "Landing page UI editing",
+                "assigned_by": "Priya Patel",
+
+                "files": [
+                    ("homepage.psd", "Design"),
+                    ("icons.zip", "Assets"),
+                    ("fonts.zip", "Fonts")
+                ],
+
+                "Edited Files": [
+                    "homepage_v2.psd"
+                ],
+
+                "Comments": [
+                    {
+                        "file": "homepage_v2.psd",
+                        "comment": "Improve color palette",
+                        "by": "Client"
+                    }
+                ]
+            }
+        }
+
+        # SELECT PROJECT
+        selected_project = st.selectbox("Select Project", list(projects.keys()))
+        project = projects[selected_project]
+
+        with st.expander("📂 View Project Details", expanded=True):
+
+            st.write(f"**📌 Project:** {selected_project}")
+            st.write(f"**📝 Description:** {project['description']}")
+            st.write(f"**👨‍💼 Assigned By:** {project['assigned_by']}")
+
+            st.divider()
+
+            # ==============================
+            # RAW FILES
+            # ==============================
+            st.subheader("📥 RAW Files")
+
+            for file, ftype in project["files"]:
+                col1, col2 = st.columns([4,1])
+                col1.write(f"📄 {file} — {ftype}")
+
+                col2.download_button(
+                    "⬇ Download",
+                    data=b"Sample",
+                    file_name=file,
+                    key=f"{selected_project}_{file}"
+                )
+
+            st.divider()
+
+            # ==============================
+            # EDITED FILES + COMMENTS
+            # ==============================
+            st.subheader("📤 Edited Files & Feedback")
+
+            for file in project["Edited Files"]:
+
+                st.markdown(f"### 📄 {file}")
+
+                # COMMENTS FILTER
+                file_comments = [
+                    c for c in project["Comments"] if c["file"] == file
+                ]
+
+                if not file_comments:
+                    st.info("No comments yet")
+                else:
+                    for c in file_comments:
+                        st.info(f"{c['by']}: {c['comment']}")
+
+                st.markdown("---")
+
+    # ==============================
+    # TAB 2 — UPLOAD
+    # ==============================
     with tab2:
-        st.subheader("📤 Upload Edited Files for Review")
+        st.subheader("📤 Upload Edited Files")
 
         uploaded_files = st.file_uploader(
-            "Upload Edited Files",
+            "Upload Files",
             accept_multiple_files=True
         )
 
@@ -119,5 +184,5 @@ def show_employee_dashboard():
             for file in uploaded_files:
                 st.success(f"Uploaded: {file.name}")
 
-        if st.button("🚀 Submit for Review"):
-            st.success("Files submitted successfully!")
+        if st.button("🚀 Submit"):
+            st.success("Submitted for review!")

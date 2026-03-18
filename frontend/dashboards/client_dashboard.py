@@ -20,59 +20,56 @@ def create_project(project_name, description, files):
             "Audio": [],
             "Others": []
         },
-        "Edited Files": [],
+        "Edited Files": ["test_vid.mp4"],  # Dummy file for testing
         "Comments": []
     }
 
-    # If initial files uploaded → put in "Others"
     if files:
         st.session_state.projects[project_name]["RAW Files"]["Others"].extend(files)
+
+
 # -------- Storage Helper --------
 def calculate_storage():
-    TOTAL_LIMIT_MB = 500  # You can change storage limit
+    TOTAL_LIMIT_MB = 500
 
     total_bytes = 0
 
     for project in st.session_state.projects.values():
-        # RAW Files
+
+        # RAW files
         for category in project["RAW Files"].values():
             for f in category:
                 total_bytes += f.size
 
-        # Edited Files
+        # Edited files (handle both string & file)
         for f in project["Edited Files"]:
-            total_bytes += f.size
+            if hasattr(f, "size"):
+                total_bytes += f.size
 
     used_mb = total_bytes / (1024 * 1024)
     left_mb = TOTAL_LIMIT_MB - used_mb
 
     return round(used_mb, 2), round(left_mb, 2), TOTAL_LIMIT_MB
 
+
 # -------- Dashboard --------
 def show_client_dashboard():
 
-
+    # 🔥 Logout
     col1, col2 = st.columns([8, 1])
-
     with col2:
-        st.markdown("###")
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state.role = None
             st.rerun()
 
-        # -------- Storage Info --------
+    # -------- Storage --------
     used, left, total = calculate_storage()
 
     col1, col2 = st.columns(2)
-
-    with col1:
-        st.metric("💾 Storage Used", f"{used} MB")
-
-    with col2:
-        st.metric("📦 Storage Left", f"{left} MB / {total} MB")
+    col1.metric("💾 Storage Used", f"{used} MB")
+    col2.metric("📦 Storage Left", f"{left} MB / {total} MB")
 
     st.divider()
-
 
     st.title("👤 Client Dashboard")
 
@@ -153,7 +150,7 @@ def show_client_dashboard():
 
         st.divider()
 
-        # -------- EDITED FILES --------
+        # -------- EDITED FILES + COMMENTS --------
         st.subheader("📝 Edited Files (For Review)")
 
         edited_files = project["Edited Files"]
@@ -162,16 +159,43 @@ def show_client_dashboard():
             st.info("No edited files received yet.")
         else:
             for file in edited_files:
-                st.write(f"📄 {file.name}")
 
+                # Handle string OR uploaded file
+                file_name = file if isinstance(file, str) else file.name
+
+                st.write(f"📄 {file_name}")
+
+                # COMMENT INPUT
                 comment = st.text_input(
-                    f"Comment on {file.name}",
-                    key=f"comment_{file.name}"
+                    f"Comment on {file_name}",
+                    key=f"comment_{selected}_{file_name}"
                 )
 
-                if st.button(f"Submit Comment for {file.name}"):
-                    project["Comments"].append({
-                        "file": file.name,
-                        "comment": comment
-                    })
-                    st.success("Comment submitted")
+                # SUBMIT BUTTON
+                if st.button(
+                    "Submit Comment",
+                    key=f"btn_{selected}_{file_name}"
+                ):
+
+                    if comment:
+                        project["Comments"].append({
+                            "file": file_name,
+                            "comment": comment,
+                            "by": "Client",
+                            "time": datetime.now().strftime("%H:%M")
+                        })
+                        st.success("Comment submitted")
+                    else:
+                        st.warning("Enter comment first")
+
+                # SHOW COMMENTS
+                file_comments = [
+                    c for c in project["Comments"] if c["file"] == file_name
+                ]
+
+                if file_comments:
+                    st.markdown("### 💬 Comments")
+                    for c in file_comments:
+                        st.info(f"{c['by']} ({c['time']}): {c['comment']}")
+
+                st.markdown("---")
