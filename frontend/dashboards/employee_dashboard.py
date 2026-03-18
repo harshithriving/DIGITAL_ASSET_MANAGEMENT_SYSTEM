@@ -1,10 +1,38 @@
 import streamlit as st
 
+# ==============================
+# STORAGE CALCULATION
+# ==============================
+def calculate_storage():
+    TOTAL_LIMIT_MB = 500  # Employee limit
+
+    total_bytes = 0
+
+    if "projects" in st.session_state:
+        for project in st.session_state.projects.values():
+
+            # RAW Files
+            for category in project["RAW Files"].values():
+                for f in category:
+                    total_bytes += f.size
+
+            # Edited Files
+            for f in project["Edited Files"]:
+                total_bytes += f.size
+
+    used_mb = total_bytes / (1024 * 1024)
+    left_mb = TOTAL_LIMIT_MB - used_mb
+
+    return round(used_mb, 2), round(left_mb, 2), TOTAL_LIMIT_MB
+
+
+# ==============================
+# EMPLOYEE DASHBOARD
+# ==============================
 def show_employee_dashboard():
 
-
+    # 🔥 LOGOUT
     col1, col2 = st.columns([8, 1])
-
     with col2:
         st.markdown("###")
         if st.button("🚪 Logout", use_container_width=True):
@@ -13,6 +41,36 @@ def show_employee_dashboard():
 
     st.title("🧑‍💻 Employee Dashboard")
 
+    # ==============================
+    # 💾 STORAGE OVERVIEW
+    # ==============================
+    used, left, total = calculate_storage()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("💾 Storage Used", f"{used} MB")
+
+    with col2:
+        st.metric("📦 Storage Left", f"{left} MB / {total} MB")
+
+    # Progress bar
+    percent = used / total if total != 0 else 0
+    st.progress(percent)
+
+    # Status
+    if percent < 0.5:
+        st.success("🟢 Storage healthy")
+    elif percent < 0.8:
+        st.warning("🟡 Moderate usage")
+    else:
+        st.error("🔴 Storage nearly full")
+
+    st.divider()
+
+    # ==============================
+    # TABS
+    # ==============================
     tab1, tab2 = st.tabs(["📂 Current Project", "📤 Upload Edited Files"])
 
     # -----------------------------
