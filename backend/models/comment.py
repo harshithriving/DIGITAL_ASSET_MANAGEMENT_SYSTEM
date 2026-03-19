@@ -12,6 +12,7 @@ def add_comment(comment, file_id, user_id):
     conn.commit()
     cursor.close()
     conn.close()
+    
 
 
 def get_comments(file_id):

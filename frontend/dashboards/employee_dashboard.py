@@ -1,188 +1,154 @@
 import streamlit as st
+import requests
+import time
 
-# ==============================
-# STORAGE CALCULATION
-# ==============================
-def calculate_storage():
-    TOTAL_LIMIT_MB = 500
+API_URL = "http://127.0.0.1:5000"
 
-    total_bytes = 0
+def safe_json(res):
+    try:
+        return res.json()
+    except:
+        return None
 
-    if "projects" in st.session_state:
-        for project in st.session_state.projects.values():
-
-            for category in project["RAW Files"].values():
-                for f in category:
-                    total_bytes += f.size
-
-            for f in project["Edited Files"]:
-                total_bytes += f.size
-
-    used_mb = total_bytes / (1024 * 1024)
-    left_mb = TOTAL_LIMIT_MB - used_mb
-
-    return round(used_mb, 2), round(left_mb, 2), TOTAL_LIMIT_MB
-
-
-# ==============================
-# EMPLOYEE DASHBOARD
-# ==============================
 def show_employee_dashboard():
-
-    # 🔥 LOGOUT
     col1, col2 = st.columns([8, 1])
     with col2:
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state.role = None
+            st.session_state.user_id = None
             st.rerun()
 
     st.title("🧑‍💻 Employee Dashboard")
 
-    # ==============================
-    # 💾 STORAGE
-    # ==============================
-    used, left, total = calculate_storage()
+    employee_id = st.session_state.user_id
+    if not employee_id:
+        st.error("User ID not found")
+        return
 
-    col1, col2 = st.columns(2)
-    col1.metric("💾 Storage Used", f"{used} MB")
-    col2.metric("📦 Storage Left", f"{left} MB / {total} MB")
+    # Get assigned projects
+    res = requests.get(f"{API_URL}/employee/projects/{employee_id}")
+    if res.status_code != 200:
+        st.error("Failed to load projects")
+        return
+    projects = res.json()
+    if not projects:
+        st.info("No assigned projects")
+        return
+    project_map = {p["project_name"]: p for p in projects}
 
-    percent = used / total if total != 0 else 0
-    st.progress(percent)
+    # --- Storage Info (Live) ---
+    user_res = requests.get(f"{API_URL}/user/{employee_id}")
+    if user_res.status_code == 200:
+        user = user_res.json()
+        used_bytes = user["storage_used"]
+        limit_bytes = user["storage_limit"]
+        used_gb = used_bytes / (1024**3)
+        limit_gb = limit_bytes / (1024**3)
+        left_gb = limit_gb - used_gb
 
+        col1, col2, col3 = st.columns([6, 2, 2])
+        col1.metric("💾 Storage Used", f"{used_gb:.2f} GB")
+        col2.metric("📦 Storage Left", f"{left_gb:.2f} GB / {limit_gb:.2f} GB")
+        with col3:
+            if st.button("🔄 Refresh Storage"):
+                st.rerun()
+
+        percent = used_gb / limit_gb if limit_gb else 0
+        if percent > 1:
+            st.warning("⚠️ Storage limit exceeded! Please free up space.")
+            percent = 1.0
+        st.progress(percent)
+    else:
+        st.error("Failed to load storage data")
     st.divider()
 
-    # ==============================
-    # TABS
-    # ==============================
-    tab1, tab2 = st.tabs(["📂 Current Project", "📤 Upload Edited Files"])
+    tab1, tab2 = st.tabs(["📂 Current Project", "📤 Upload Edited File (Simulated)"])
 
-    # ==============================
-    # TAB 1 — PROJECT VIEW
-    # ==============================
     with tab1:
-
-        # ✅ FIXED PROJECT STRUCTURE
-        projects = {
-            "Marketing Video Campaign": {
-                "description": "Social media ad campaign editing",
-                "assigned_by": "Ashwini Bhagat",
-
-                "files": [
-                    ("intro_raw.mp4", "Video"),
-                    ("background_music.wav", "Audio"),
-                    ("product_images.zip", "Images"),
-                    ("brand_guidelines.pdf", "Document")
-                ],
-
-                "Edited Files": [
-                    "intro_video.mp4"
-                ],
-
-                "Comments": [
-                    {
-                        "file": "intro_video.mp4",
-                        "comment": "Reduce brightness",
-                        "by": "Client"
-                    },
-                    {
-                        "file": "intro_video.mp4",
-                        "comment": "Add transition",
-                        "by": "Project Manager"
-                    }
-                ]
-            },
-
-            "Website UI Design": {
-                "description": "Landing page UI editing",
-                "assigned_by": "Priya Patel",
-
-                "files": [
-                    ("homepage.psd", "Design"),
-                    ("icons.zip", "Assets"),
-                    ("fonts.zip", "Fonts")
-                ],
-
-                "Edited Files": [
-                    "homepage_v2.psd"
-                ],
-
-                "Comments": [
-                    {
-                        "file": "homepage_v2.psd",
-                        "comment": "Improve color palette",
-                        "by": "Client"
-                    }
-                ]
-            }
-        }
-
-        # SELECT PROJECT
-        selected_project = st.selectbox("Select Project", list(projects.keys()))
-        project = projects[selected_project]
-
-        with st.expander("📂 View Project Details", expanded=True):
-
-            st.write(f"**📌 Project:** {selected_project}")
+        selected_name = st.selectbox("Select Project", list(project_map.keys()), key="proj1")
+        project = project_map[selected_name]
+        with st.expander("📂 Project Details", expanded=True):
+            st.write(f"**📌 Project:** {project['project_name']}")
             st.write(f"**📝 Description:** {project['description']}")
-            st.write(f"**👨‍💼 Assigned By:** {project['assigned_by']}")
-
+            st.write(f"**👨‍💼 PM:** {project['project_manager_user_id']}")
             st.divider()
 
-            # ==============================
-            # RAW FILES
-            # ==============================
-            st.subheader("📥 RAW Files")
-
-            for file, ftype in project["files"]:
-                col1, col2 = st.columns([4,1])
-                col1.write(f"📄 {file} — {ftype}")
-
-                col2.download_button(
-                    "⬇ Download",
-                    data=b"Sample",
-                    file_name=file,
-                    key=f"{selected_project}_{file}"
-                )
-
-            st.divider()
-
-            # ==============================
-            # EDITED FILES + COMMENTS
-            # ==============================
-            st.subheader("📤 Edited Files & Feedback")
-
-            for file in project["Edited Files"]:
-
-                st.markdown(f"### 📄 {file}")
-
-                # COMMENTS FILTER
-                file_comments = [
-                    c for c in project["Comments"] if c["file"] == file
-                ]
-
-                if not file_comments:
-                    st.info("No comments yet")
+            # Files with comments
+            file_res = requests.get(f"{API_URL}/project/files/{project['project_id']}")
+            if file_res.status_code == 200:
+                files = file_res.json()
+                st.subheader("📥 Files")
+                if not files:
+                    st.info("No files in this project")
                 else:
-                    for c in file_comments:
-                        st.info(f"{c['by']}: {c['comment']}")
+                    for f in files:
+                        st.markdown(f"**📄 {f['file_name']}**")
+                        com_res = requests.get(f"{API_URL}/file/comments/{f['file_id']}")
+                        if com_res.status_code == 200:
+                            comments = com_res.json()
+                            if comments:
+                                st.markdown("Comments:")
+                                for c in comments:
+                                    st.info(f"User {c['user_id']}: {c['comment_text']}")
+                            else:
+                                st.caption("No comments yet.")
+                        else:
+                            st.error("Failed to load comments")
+                        st.markdown("---")
+            else:
+                st.error("Failed to load files")
 
-                st.markdown("---")
-
-    # ==============================
-    # TAB 2 — UPLOAD
-    # ==============================
     with tab2:
-        st.subheader("📤 Upload Edited Files")
+        st.subheader("📤 Upload Edited File (Simulated)")
+        st.caption("Enter file size in MB. After upload, storage will update automatically via database trigger.")
 
-        uploaded_files = st.file_uploader(
-            "Upload Files",
-            accept_multiple_files=True
-        )
+        selected_name = st.selectbox("Select Project", list(project_map.keys()), key="proj2")
+        project = project_map[selected_name]
 
-        if uploaded_files:
-            for file in uploaded_files:
-                st.success(f"Uploaded: {file.name}")
+        file_res = requests.get(f"{API_URL}/project/files/{project['project_id']}")
+        if file_res.status_code == 200:
+            files = file_res.json()
+            if not files:
+                st.info("No files in this project to update.")
+            else:
+                file_options = {f"{f['file_name']} (ID: {f['file_id']})": f['file_id'] for f in files}
+                selected_file_label = st.selectbox("Select file to update", list(file_options.keys()))
+                file_id = file_options[selected_file_label]
 
-        if st.button("🚀 Submit"):
-            st.success("Submitted for review!")
+                current_file = next((f for f in files if f['file_id'] == file_id), None)
+                default_name = current_file['file_name'] if current_file else ""
+
+                new_file_name = st.text_input("New file name (optional)", value=default_name)
+
+                size_mb = st.number_input("File size (MB) for this version", min_value=0.0, value=1.0, step=0.5)
+                size_bytes = int(size_mb * 1024 * 1024)
+
+                if st.button("🚀 Submit Simulated Version"):
+                    sim_res = requests.post(
+                        f"{API_URL}/simulate/upload/version",
+                        json={
+                            "file_id": file_id,
+                            "uploaded_by": employee_id,
+                            "file_name": new_file_name,
+                            "file_size": size_bytes
+                        }
+                    )
+                    if sim_res.status_code == 201:
+                        # Give the database trigger a moment to update
+                        time.sleep(1)
+                        # Fetch updated user data
+                        updated_user = safe_json(requests.get(f"{API_URL}/user/{employee_id}"))
+                        if updated_user:
+                            new_used_gb = updated_user["storage_used"] / (1024**3)
+                            st.success(
+                                f"✅ Simulated version created with size {size_mb} MB. "
+                                f"**Database trigger** automatically updated your storage to **{new_used_gb:.2f} GB**."
+                            )
+                        else:
+                            st.success("Simulated version created.")
+                        # Rerun to refresh the entire dashboard
+                        st.rerun()
+                    else:
+                        st.error("Failed to create simulated version")
+        else:
+            st.error("Failed to load files")
