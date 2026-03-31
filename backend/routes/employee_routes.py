@@ -18,3 +18,5 @@ def get_employee_projects(user_id):
     cursor.close()
     conn.close()
     return jsonify(projects)
+
+

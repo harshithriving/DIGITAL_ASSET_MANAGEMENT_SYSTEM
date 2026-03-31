@@ -34,8 +34,15 @@ def show_admin_dashboard():
         st.error("Failed to load storage data")
     st.divider()
 
-    tab1, tab2, tab3 = st.tabs(["📂 Assign Projects", "👥 Users & Storage", "🚀 Running Projects"])
+    # Create tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📂 Assign Projects",
+        "👥 Users & Storage",
+        "🚀 Running Projects",
+        "📋 Audit Log"
+    ])
 
+    # ---------- Tab 1: Assign Projects ----------
     with tab1:
         st.subheader("📦 Projects")
         response = requests.get(f"{API_URL}/projects")
@@ -80,6 +87,7 @@ def show_admin_dashboard():
         else:
             st.error("Failed to load projects")
 
+    # ---------- Tab 2: Users & Storage ----------
     with tab2:
         st.subheader("👥 Users & Storage")
         response = requests.get(f"{API_URL}/all_users_storage")
@@ -101,6 +109,7 @@ def show_admin_dashboard():
         else:
             st.error("Failed to load users")
 
+    # ---------- Tab 3: Running Projects ----------
     with tab3:
         st.subheader("🚀 Active Projects")
         response = requests.get(f"{API_URL}/projects")
@@ -118,4 +127,30 @@ def show_admin_dashboard():
         else:
             st.error("Failed to load projects")
 
-            
+    # ---------- Tab 4: Audit Log ----------
+    with tab4:
+        st.subheader("📋 File Status Change Log")
+        logs_res = requests.get(f"{API_URL}/audit/logs")
+        if logs_res.status_code == 200:
+            logs = logs_res.json()
+            if logs:
+                # Convert to DataFrame for nice display
+                df_logs = pd.DataFrame(logs)
+                # Format datetime
+                if 'changed_at' in df_logs.columns:
+                    df_logs['changed_at'] = pd.to_datetime(df_logs['changed_at'])
+                # Select and order columns
+                display_cols = ['file_name', 'old_status', 'new_status', 'changed_by_name', 'changed_at']
+                # Ensure all columns exist
+                available_cols = [col for col in display_cols if col in df_logs.columns]
+                st.dataframe(df_logs[available_cols], use_container_width=True)
+                
+                # Optional: show raw JSON expander
+                with st.expander("View Raw Log Data"):
+                    st.json(logs)
+            else:
+                st.info("No status changes have been logged yet. Approve or reject a file to see entries here.")
+        else:
+            st.error("Failed to load audit logs")
+            if logs_res.text:
+                st.write("Error details:", logs_res.text)

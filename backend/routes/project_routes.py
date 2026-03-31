@@ -37,7 +37,14 @@ def get_project_files(project_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("""
-        SELECT f.file_id, f.file_name
+        SELECT 
+            f.file_id, 
+            f.file_name,
+            f.total_versions,
+            EXISTS(
+                SELECT 1 FROM File_Version fv
+                WHERE fv.file_id = f.file_id AND fv.status = 'Approved'
+            ) AS has_approved
         FROM File f
         JOIN Folder fo ON f.folder_id = fo.folder_id
         WHERE fo.project_id = %s
@@ -46,6 +53,7 @@ def get_project_files(project_id):
     cursor.close()
     conn.close()
     return jsonify(files)
+
 
 @project_bp.route("/project/full/<int:project_id>", methods=["GET"])
 def get_project_full(project_id):
