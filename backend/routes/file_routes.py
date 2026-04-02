@@ -8,6 +8,15 @@ file_bp = Blueprint("file", __name__)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+def check_permission(cursor, user_id, folder_id):
+    cursor.execute("""
+        SELECT 1
+        FROM Permission
+        WHERE user_id = %s AND folder_id = %s
+    """, (user_id, folder_id))
+    
+    return cursor.fetchone() is not None
+
 @file_bp.route("/file/create", methods=["POST"])
 def create_file():
     data = request.json
@@ -20,7 +29,7 @@ def create_file():
         return jsonify({"error": "Missing fields"}), 400
 
     conn = get_db_connection()
-    cursor = conn.cursor()(dictionary = True)
+    cursor = conn.cursor(dictionary = True)
 
     try:
         cursor.execute("""
@@ -33,9 +42,13 @@ def create_file():
         if not user:
             return jsonify({"error" : "User not found"}), 404
         
+        # PERMISSION CHECK
+        if not check_permission(cursor, user_id, folder_id):
+            return jsonify({"error": "Permission denied"}), 403
+        
         if user['storage_used'] + file_size > user['storage_limit']:
             return jsonify({"error" : "Storage limit exceeded"}), 400
-
+    
         cursor.execute("""
             INSERT INTO File (file_name, file_type, folder_id)
             VALUES (%s, %s, %s)
@@ -86,11 +99,26 @@ def simulate_upload_version():
 
         if not user:
             return jsonify({"error": "User not found"}), 404
+        
+        # GET FOLDER ID FROM FILE
+        cursor.execute("""
+            SELECT folder_id FROM File WHERE file_id = %s
+        """, (file_id,))
+        file_data = cursor.fetchone()
+
+        if not file_data:
+            return jsonify({"error": "File not found"}), 404
+
+        folder_id = file_data['folder_id']
+
+        # PERMISSION CHECK
+        if not check_permission(cursor, uploaded_by, folder_id):
+            return jsonify({"error": "Permission denied"}), 403
 
         if user['storage_used'] + file_size > user['storage_limit']:
             return jsonify({"error": "Storage limit exceeded"}), 400
 
-        cursor.execute("SELECT MAX(version_number) as max_version FROM File_Version WHERE file_id = %s", (file_id,))
+        cursor.execute("SELECT MAX(version_number) as max_version FROM File_Version WHERE file_id = %s" , (file_id,))
         result = cursor.fetchone()
         next_version = (result['max_version'] or 0) + 1
 
@@ -167,18 +195,70 @@ def files_for_review(project_id):
 
 @file_bp.route("/file/approve/<int:version_id>", methods=["PUT"])
 def approve(version_id):
+    data = request.json
+    user_id = data.get("user_id")
+
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
+
+    # GET FILE → FOLDER
+    cursor.execute("""
+        SELECT f.folder_id
+        FROM File_Version fv
+        JOIN File f ON fv.file_id = f.file_id
+        WHERE fv.version_id = %s
+    """, (version_id,))
+    
+    result = cursor.fetchone()
+    if not result:
+        return jsonify({"error": "Version not found"}), 404
+
+    folder_id = result['folder_id']
+
+    # PERMISSION CHECK
+    if not check_permission(cursor, user_id, folder_id):
+        return jsonify({"error": "Permission denied"}), 403
+
+    # UPDATE
     cursor.execute("UPDATE File_Version SET status = 'Approved' WHERE version_id = %s", (version_id,))
     conn.commit()
+
     cursor.close()
     conn.close()
+
     return jsonify({"message": "Approved"})
 
 @file_bp.route("/file/reject/<int:version_id>", methods=["PUT"])
 def reject(version_id):
+    data = request.json
+    user_id = data.get("user_id")
+
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
+
+    # GET FILE → FOLDER
+    cursor.execute("""
+        SELECT f.folder_id
+        FROM File_Version fv
+        JOIN File f ON fv.file_id = f.file_id
+        WHERE fv.version_id = %s
+    """, (version_id,))
+    
+    result = cursor.fetchone()
+    if not result:
+        return jsonify({"error": "Version not found"}), 404
+
+    folder_id = result['folder_id']
+
+    # PERMISSION CHECK
+    if not check_permission(cursor, user_id, folder_id):
+        return jsonify({"error": "Permission denied"}), 403
     cursor.execute("UPDATE File_Version SET status = 'Rejected' WHERE version_id = %s", (version_id,))
     conn.commit()
     cursor.close()
@@ -239,11 +319,21 @@ def delete_file(file_id):
 
         if not versions:
             return jsonify({"error": "File not found"}), 404
+        
+        # GET FOLDER ID
+        cursor.execute("""
+            SELECT folder_id FROM File WHERE file_id = %s
+        """, (file_id,))
+        file_data = cursor.fetchone()
 
-        # OPTIONAL: Check ownership (only uploader can delete)
-        for v in versions:
-            if v['uploaded_by'] != user_id:
-                return jsonify({"error": "Not authorized to delete this file"}), 403
+        if not file_data:
+            return jsonify({"error": "File not found"}), 404
+
+        folder_id = file_data['folder_id']
+
+        # PERMISSION CHECK
+        if not check_permission(cursor, user_id, folder_id):
+            return jsonify({"error": "Permission denied"}), 403
 
         # CALCULATE TOTAL SIZE (to reduce storage)
         total_size = sum(v['file_size'] or 0 for v in versions)
