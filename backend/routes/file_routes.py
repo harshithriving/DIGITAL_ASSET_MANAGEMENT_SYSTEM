@@ -46,6 +46,15 @@ def create_file():
         if not check_permission(cursor, user_id, folder_id):
             return jsonify({"error": "Permission denied"}), 403
         
+        # DUPLICATE FILE CHECK
+        cursor.execute("""
+            SELECT 1 FROM File
+            WHERE file_name = %s AND folder_id = %s
+        """, (file_name, folder_id))
+
+        if cursor.fetchone():
+            return jsonify({"error": "File with same name already exists in this folder"}), 400
+                
         if user['storage_used'] + file_size > user['storage_limit']:
             return jsonify({"error" : "Storage limit exceeded"}), 400
     
@@ -204,32 +213,53 @@ def approve(version_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
-    # GET FILE → FOLDER
-    cursor.execute("""
-        SELECT f.folder_id
-        FROM File_Version fv
-        JOIN File f ON fv.file_id = f.file_id
-        WHERE fv.version_id = %s
-    """, (version_id,))
-    
-    result = cursor.fetchone()
-    if not result:
-        return jsonify({"error": "Version not found"}), 404
+    try:
+        # GET FILE → FOLDER
+        cursor.execute("""
+            SELECT f.folder_id
+            FROM File_Version fv
+            JOIN File f ON fv.file_id = f.file_id
+            WHERE fv.version_id = %s
+        """, (version_id,))
+        
+        result = cursor.fetchone()
+        if not result:
+            return jsonify({"error": "Version not found"}), 404
 
-    folder_id = result['folder_id']
+        folder_id = result['folder_id']
 
-    # PERMISSION CHECK
-    if not check_permission(cursor, user_id, folder_id):
-        return jsonify({"error": "Permission denied"}), 403
+        # PERMISSION CHECK
+        if not check_permission(cursor, user_id, folder_id):
+            return jsonify({"error": "Permission denied"}), 403
 
-    # UPDATE
-    cursor.execute("UPDATE File_Version SET status = 'Approved' WHERE version_id = %s", (version_id,))
-    conn.commit()
+        # STEP 1: Unapprove other versions
+        cursor.execute("""
+            UPDATE File_Version
+            SET status = 'Rejected'
+            WHERE file_id = (
+                SELECT file_id FROM File_Version WHERE version_id = %s
+            )
+        """, (version_id,))
 
-    cursor.close()
-    conn.close()
+        # STEP 2: Approve selected version
+        cursor.execute("""
+            UPDATE File_Version
+            SET status = 'Approved'
+            WHERE version_id = %s
+        """, (version_id,))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        cursor.close()
+        conn.close()
 
     return jsonify({"message": "Approved"})
+
 
 @file_bp.route("/file/reject/<int:version_id>", methods=["PUT"])
 def reject(version_id):
