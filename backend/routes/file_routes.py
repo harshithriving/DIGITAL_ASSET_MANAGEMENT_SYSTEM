@@ -142,6 +142,13 @@ def simulate_upload_version():
             WHERE user_id = %s
         """, (file_size, uploaded_by))
 
+        version_id = cursor.lastrowid
+
+        cursor.execute("""
+            INSERT INTO File_Status_Log (file_id, version_id, old_status, new_status, changed_by)
+            VALUES (%s, %s, NULL, 'In-Process', %s)
+        """, (file_id, version_id, uploaded_by))
+
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -150,7 +157,7 @@ def simulate_upload_version():
         cursor.close()
         conn.close()
 
-    return jsonify({"message": "Simulated version uploaded", "version_id": cursor.lastrowid}), 201
+    return jsonify({"message": "Simulated version uploaded", "version_id": version_id}), 201
 
 @file_bp.route("/file/version/<int:version_id>", methods=["DELETE"])
 def delete_version(version_id):
@@ -248,6 +255,17 @@ def approve(version_id):
             WHERE version_id = %s
         """, (version_id,))
 
+        cursor.execute("""
+            INSERT INTO File_Status_Log (file_id, version_id, old_status, new_status, changed_by)
+            VALUES (
+                (SELECT file_id FROM File_Version WHERE version_id = %s),
+                %s,
+                'In-Process',
+                'Approved',
+                %s
+            )
+        """, (version_id, version_id, user_id))
+
         conn.commit()
 
     except Exception as e:
@@ -290,6 +308,18 @@ def reject(version_id):
     if not check_permission(cursor, user_id, folder_id):
         return jsonify({"error": "Permission denied"}), 403
     cursor.execute("UPDATE File_Version SET status = 'Rejected' WHERE version_id = %s", (version_id,))
+
+    cursor.execute("""
+        INSERT INTO File_Status_Log (file_id, version_id, old_status, new_status, changed_by)
+        VALUES (
+            (SELECT file_id FROM File_Version WHERE version_id = %s),
+            %s,
+            'In-Process',
+            'Rejected',
+            %s
+        )
+    """, (version_id, version_id, user_id))
+
     conn.commit()
     cursor.close()
     conn.close()
@@ -383,6 +413,11 @@ def delete_file(file_id):
             SET storage_used = GREATEST(storage_used - %s, 0)
             WHERE user_id = %s
         """, (total_size, user_id))
+
+        cursor.execute("""
+            INSERT INTO File_Status_Log (file_id, version_id, old_status, new_status, changed_by)
+            VALUES (%s, NULL, 'Existing', 'Deleted', %s)
+        """, (file_id, user_id))
 
         conn.commit()
 
