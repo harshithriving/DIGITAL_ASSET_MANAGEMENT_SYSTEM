@@ -20,8 +20,22 @@ def create_file():
         return jsonify({"error": "Missing fields"}), 400
 
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor()(dictionary = True)
+
     try:
+        cursor.execute("""
+            SELECT storage_used, storage_limit
+            FROM User
+            WHERE user_id = %s
+        """, (user_id,))
+        user = cursor.fetchone()
+
+        if not user:
+            return jsonify({"error" : "User not found"}), 404
+        
+        if user['storage_used'] + file_size > user['storage_limit']:
+            return jsonify({"error" : "Storage limit exceeded"}), 400
+
         cursor.execute("""
             INSERT INTO File (file_name, file_type, folder_id)
             VALUES (%s, %s, %s)
@@ -32,6 +46,12 @@ def create_file():
             INSERT INTO File_Version (file_id, version_number, uploaded_by, status, file_path, file_size)
             VALUES (%s, %s, %s, %s, %s, %s)
         """, (file_id, 1, user_id, 'Raw', None, file_size))
+
+        cursor.execute("""
+            UPDATE User
+            SET storage_used = storage_used + %s
+            WHERE user_id = %s
+        """, (file_size, user_id))
 
         conn.commit()
     except Exception as e:
@@ -56,6 +76,20 @@ def simulate_upload_version():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+
+        cursor.execute("""
+            SELECT storage_used, storage_limit
+            FROM User
+            WHERE user_id = %s
+        """, (uploaded_by,))
+        user = cursor.fetchone()
+
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        if user['storage_used'] + file_size > user['storage_limit']:
+            return jsonify({"error": "Storage limit exceeded"}), 400
+
         cursor.execute("SELECT MAX(version_number) as max_version FROM File_Version WHERE file_id = %s", (file_id,))
         result = cursor.fetchone()
         next_version = (result['max_version'] or 0) + 1
@@ -64,6 +98,12 @@ def simulate_upload_version():
             INSERT INTO File_Version (file_id, version_number, uploaded_by, status, file_path, file_size)
             VALUES (%s, %s, %s, %s, %s, %s)
         """, (file_id, next_version, uploaded_by, 'In-Process', None, file_size))
+
+        cursor.execute("""
+            UPDATE User
+            SET storage_used = storage_used + %s
+            WHERE user_id = %s
+        """, (file_size, uploaded_by))
 
         conn.commit()
     except Exception as e:
