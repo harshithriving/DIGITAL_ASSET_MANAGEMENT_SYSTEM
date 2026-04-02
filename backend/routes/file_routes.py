@@ -215,3 +215,63 @@ def approved_files(project_id):
     cursor.close()
     conn.close()
     return jsonify(data)
+
+@file_bp.route("/file/delete/<int:file_id>", methods=["DELETE"])
+def delete_file(file_id):
+    data = request.json
+    user_id = data.get("user_id")
+
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        # CHECK FILE EXISTS
+        cursor.execute("""
+            SELECT f.file_id, fv.uploaded_by, fv.file_size
+            FROM File f
+            JOIN File_Version fv ON f.file_id = fv.file_id
+            WHERE f.file_id = %s
+        """, (file_id,))
+        versions = cursor.fetchall()
+
+        if not versions:
+            return jsonify({"error": "File not found"}), 404
+
+        # OPTIONAL: Check ownership (only uploader can delete)
+        for v in versions:
+            if v['uploaded_by'] != user_id:
+                return jsonify({"error": "Not authorized to delete this file"}), 403
+
+        # CALCULATE TOTAL SIZE (to reduce storage)
+        total_size = sum(v['file_size'] or 0 for v in versions)
+
+        # DELETE COMMENTS
+        cursor.execute("DELETE FROM Comment WHERE file_id = %s", (file_id,))
+
+        # DELETE VERSIONS
+        cursor.execute("DELETE FROM File_Version WHERE file_id = %s", (file_id,))
+
+        # DELETE FILE
+        cursor.execute("DELETE FROM File WHERE file_id = %s", (file_id,))
+
+        # UPDATE STORAGE (reduce usage)
+        cursor.execute("""
+            UPDATE User
+            SET storage_used = GREATEST(storage_used - %s, 0)
+            WHERE user_id = %s
+        """, (total_size, user_id))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        cursor.close()
+        conn.close()
+
+    return jsonify({"message": "File deleted successfully"}), 200
