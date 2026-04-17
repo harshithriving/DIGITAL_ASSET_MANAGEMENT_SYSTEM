@@ -197,8 +197,13 @@ def show_client_dashboard():
                 st.write(f"📄 {f['file_name']} (V{f['version_number']})")
                 col1, col2 = st.columns(2)
                 if col1.button("Approve", key=f"a_{f['version_id']}"):
-                    requests.put(f"{API_URL}/file/approve/{f['version_id']}")
-                    st.rerun()
+                    approve_res = requests.put(f"{API_URL}/file/approve/{f['version_id']}")
+                    if approve_res.status_code == 200:
+                        st.success("Approved successfully")
+                        st.rerun()
+                    else:
+                        error_msg = approve_res.json().get("error", "Approval failed")
+                        st.error(f"❌ {error_msg}")
                 if col2.button("Reject", key=f"r_{f['version_id']}"):
                     requests.put(f"{API_URL}/file/reject/{f['version_id']}")
                     st.rerun()
@@ -261,8 +266,7 @@ def show_client_dashboard():
                     error_msg = create_res.json().get("error", "Storage limit exceeded")
                     st.error(f"❌ {error_msg}")
                 else:
-                    st.error("Failed")
-                st.divider()
+                    st.error("Failed to create file")
 
         # Tree view (unchanged)
         folder_map_full = {f["folder_id"]: f for f in folders}

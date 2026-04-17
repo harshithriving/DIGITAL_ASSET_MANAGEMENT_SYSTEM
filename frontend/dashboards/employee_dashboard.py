@@ -171,60 +171,110 @@ def show_employee_dashboard():
                 st.error("Failed to load files")
 
     with tab2:
-        st.subheader("📤 Upload Edited File (Simulated)")
+        st.subheader("📤 Upload New File or Update Existing File")
         st.caption("Enter file size in MB. After upload, storage will update automatically via database trigger.")
 
         selected_name = st.selectbox("Select Project", list(project_map.keys()), key="proj2")
         project = project_map[selected_name]
 
-        file_res = requests.get(f"{API_URL}/project/files/{project['project_id']}")
-        if file_res.status_code == 200:
-            files = file_res.json()
-            if not files:
-                st.info("No files in this project to update.")
-            else:
-                editable_files = [f for f in files if not f.get('has_approved', False)]
-                if not editable_files:
-                    st.warning("All files in this project have been approved. No further uploads allowed.")
+        # Get folder structure for the project
+        folder_res = requests.get(f"{API_URL}/project/full/{project['project_id']}")
+        folder_data = safe_json(folder_res)
+        
+        if folder_res.status_code == 200 and folder_data:
+            folders = folder_data.get("folders", [])
+            # Filter out root folders, show only subfolders for file upload
+            upload_folders = [f for f in folders if f.get("folder_name") not in ["Root Folder"]]
+            folder_map = {f["folder_name"]: f["folder_id"] for f in upload_folders}
+            
+            # Option 1: Upload New File
+            st.markdown("### 📤 Upload New File")
+            col1, col2 = st.columns(2)
+            with col1:
+                new_file_name = st.text_input("File Name", key="new_file_name")
+                new_file_size_mb = st.number_input("File size (MB)", min_value=0.0, value=1.0, step=0.5, key="new_file_size")
+                selected_folder = st.selectbox("Select Folder", list(folder_map.keys()), key="new_file_folder")
+            with col2:
+                st.write("")
+                st.write("")
+                st.info("💡 Tip: Choose the appropriate folder for your file type (Images, Videos, Audio, Others)")
+            
+            if st.button("📤 Create New File", key="create_new_file"):
+                if not new_file_name:
+                    st.warning("Please enter a file name")
                 else:
-                    file_options = {f"{f['file_name']} (ID: {f['file_id']})": f['file_id'] for f in editable_files}
-                    selected_file_label = st.selectbox("Select file to update", list(file_options.keys()))
-                    file_id = file_options[selected_file_label]
+                    size_bytes = int(new_file_size_mb * 1024 * 1024)
+                    create_res = requests.post(
+                        f"{API_URL}/file/create",
+                        json={
+                            "file_name": new_file_name,
+                            "folder_id": folder_map[selected_folder],
+                            "user_id": employee_id,
+                            "file_size": size_bytes
+                        }
+                    )
+                    if create_res.status_code == 201:
+                        st.success(f"✅ New file '{new_file_name}' created with size {new_file_size_mb} MB")
+                        st.rerun()
+                    elif create_res.status_code == 400:
+                        error_msg = create_res.json().get("error", "Storage limit exceeded")
+                        st.error(f"❌ {error_msg}")
+                    else:
+                        st.error("Failed to create file")
+            
+            st.divider()
+            
+            # Option 2: Update Existing File
+            st.markdown("### 🔄 Update Existing File")
+            
+            file_res = requests.get(f"{API_URL}/project/files/{project['project_id']}")
+            if file_res.status_code == 200:
+                files = file_res.json()
+                if not files:
+                    st.info("No files in this project to update.")
+                else:
+                    # Filter files that do NOT have an approved version (editable)
+                    editable_files = [f for f in files if not f.get('has_approved', False)]
+                    if not editable_files:
+                        st.warning("All files in this project have been approved. No further uploads allowed.")
+                    else:
+                        file_options = {f"{f['file_name']} (ID: {f['file_id']})": f['file_id'] for f in editable_files}
+                        selected_file_label = st.selectbox("Select file to update", list(file_options.keys()), key="update_file")
+                        file_id = file_options[selected_file_label]
 
-                    current_file = next((f for f in editable_files if f['file_id'] == file_id), None)
-                    default_name = current_file['file_name'] if current_file else ""
+                        current_file = next((f for f in editable_files if f['file_id'] == file_id), None)
+                        default_name = current_file['file_name'] if current_file else ""
 
-                    new_file_name = st.text_input("New file name (optional)", value=default_name)
+                        new_version_name = st.text_input("New version name (optional)", value=default_name, key="version_name")
 
-                    size_mb = st.number_input("File size (MB) for this version", min_value=0.0, value=1.0, step=0.5)
-                    size_bytes = int(size_mb * 1024 * 1024)
+                        version_size_mb = st.number_input("Version size (MB)", min_value=0.0, value=1.0, step=0.5, key="version_size")
+                        version_size_bytes = int(version_size_mb * 1024 * 1024)
 
-                    if st.button("🚀 Submit Simulated Version"):
-                        sim_res = requests.post(
-                            f"{API_URL}/simulate/upload/version",
-                            json={
-                                "file_id": file_id,
-                                "uploaded_by": employee_id,
-                                "file_name": new_file_name,
-                                "file_size": size_bytes
-                            }
-                        )
-                        if sim_res.status_code == 201:
-                            time.sleep(1)
-                            updated_user = safe_json(requests.get(f"{API_URL}/user/{employee_id}"))
-                            if updated_user:
-                                new_used_gb = updated_user["storage_used"] / (1024**3)
-                                st.success(
-                                    f"✅ Simulated version created with size {size_mb} MB. "
-                                    f"Storage now: **{new_used_gb:.2f} GB**"
-                                )
+                        if st.button("🚀 Submit New Version", key="submit_version"):
+                            sim_res = requests.post(
+                                f"{API_URL}/simulate/upload/version",
+                                json={
+                                    "file_id": file_id,
+                                    "uploaded_by": employee_id,
+                                    "file_name": new_version_name,
+                                    "file_size": version_size_bytes
+                                }
+                            )
+                            if sim_res.status_code == 201:
+                                time.sleep(1)
+                                updated_user = safe_json(requests.get(f"{API_URL}/user/{employee_id}"))
+                                if updated_user:
+                                    new_used_gb = updated_user["storage_used"] / (1024**3)
+                                    st.success(f"✅ New version created. Storage now: {new_used_gb:.2f} GB")
+                                else:
+                                    st.success("New version created.")
+                                st.rerun()
+                            elif sim_res.status_code == 400:
+                                error_msg = sim_res.json().get("error", "Upload failed")
+                                st.error(f"❌ {error_msg}")
                             else:
-                                st.success("Simulated version created.")
-                            st.rerun()
-                        elif sim_res.status_code == 400:
-                            error_msg = sim_res.json().get("error", "Storage limit exceeded")
-                            st.error(f"❌ {error_msg}")
-                        else:
-                            st.error("Failed to create simulated version")
+                                st.error("Failed to create version")
+            else:
+                st.error("Failed to load files")
         else:
-            st.error("Failed to load files")
+            st.error("Failed to load folder structure")
