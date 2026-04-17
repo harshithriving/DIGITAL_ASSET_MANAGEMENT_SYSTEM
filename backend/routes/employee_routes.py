@@ -8,8 +8,9 @@ def get_employee_projects(user_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("""
-        SELECT DISTINCT p.*
+        SELECT DISTINCT p.*, u.name as project_manager_name
         FROM Project p
+        LEFT JOIN User u ON p.project_manager_user_id = u.user_id
         JOIN Folder f ON p.project_id = f.project_id
         JOIN Permission perm ON f.folder_id = perm.folder_id
         WHERE perm.user_id = %s

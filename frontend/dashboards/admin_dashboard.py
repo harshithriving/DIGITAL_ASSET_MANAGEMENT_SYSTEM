@@ -63,15 +63,21 @@ def show_admin_dashboard():
                 st.subheader("📌 Project Details")
                 st.write(f"**Name:** {selected_project['project_name']}")
                 st.write(f"**Description:** {selected_project['description']}")
+                
+                # ✅ NEW: Display current Project Manager name (if assigned)
+                current_pm_name = selected_project.get('project_manager_name', 'Not assigned')
+                st.write(f"**Current Project Manager:** {current_pm_name}")
 
-                # Fetch PMs
+                # Fetch PMs for assignment
                 pm_res = requests.get(f"{API_URL}/users/ProjectManager")
                 if pm_res.status_code == 200:
                     pms = pm_res.json()
                     if pms:
+                        # Filter out the currently assigned PM from the dropdown (optional but nice)
                         pm_names = [pm["name"] for pm in pms]
+                        selected_pm_name = st.selectbox("Assign New PM", pm_names)
                         pm_map = {pm["name"]: pm["user_id"] for pm in pms}
-                        selected_pm_name = st.selectbox("Select PM", pm_names)
+                        
                         if st.button("✅ Assign Project"):
                             data = {
                                 "project_id": selected_project["project_id"],
@@ -80,6 +86,7 @@ def show_admin_dashboard():
                             res = requests.post(f"{API_URL}/assign_project", json=data)
                             if res.status_code == 200:
                                 st.success("Project assigned successfully")
+                                st.rerun()
                             else:
                                 st.error("Assignment failed")
                     else:
@@ -166,7 +173,7 @@ def show_admin_dashboard():
                 running = [
                     {
                         "Project": p["project_name"],
-                        "PM": p["project_manager_user_id"] if p["project_manager_user_id"] else "Unassigned",
+                        "Project Manager": p.get("project_manager_name", "Unassigned"),
                         "Latest Status": p.get("latest_status", "No Files"),
                         "Created": p.get("created_at", "")[:10] if p.get("created_at") else ""
                     }

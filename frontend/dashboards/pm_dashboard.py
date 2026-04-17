@@ -35,7 +35,10 @@ def show_pm_dashboard():
         st.subheader("Projects Assigned To You")
         for p in projects:
             st.markdown(f"### 📌 {p['project_name']}")
-            st.write(f"Description: {p['description']}")
+            st.write(f"**Description:** {p['description']}")
+            st.write(f"**Client:** {p.get('client_name', 'Unknown')}")
+            st.write(f"**Created:** {p.get('created_at', '')[:10] if p.get('created_at') else 'N/A'}")
+            st.divider()
 
     elif menu == "👥 Assign Employees":
         st.subheader("Assign Employees")

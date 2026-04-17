@@ -7,7 +7,15 @@ pm_bp = Blueprint("pm", __name__)
 def get_pm_projects(user_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM Project WHERE project_manager_user_id = %s", (user_id,))
+    cursor.execute("""
+        SELECT p.*, 
+               u.name as project_manager_name,
+               c.name as client_name
+        FROM Project p
+        LEFT JOIN User u ON p.project_manager_user_id = u.user_id
+        LEFT JOIN User c ON p.client_user_id = c.user_id
+        WHERE p.project_manager_user_id = %s
+    """, (user_id,))
     projects = cursor.fetchall()
     cursor.close()
     conn.close()

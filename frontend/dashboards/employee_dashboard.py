@@ -92,7 +92,7 @@ def show_employee_dashboard():
         with st.expander("📂 Project Details", expanded=True):
             st.write(f"**📌 Project:** {project['project_name']}")
             st.write(f"**📝 Description:** {project['description']}")
-            st.write(f"**👨‍💼 PM:** {project['project_manager_user_id']}")
+            st.write(f"**👨‍💼 Project Manager:** {project.get('project_manager_name', 'Not assigned')}")
             st.divider()
 
             # Files with comments and version history

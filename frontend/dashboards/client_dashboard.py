@@ -170,20 +170,10 @@ def show_client_dashboard():
         st.subheader("📌 Project Info")
         st.write(selected_project["description"])
 
-        # Team info
+                # Team info
         st.subheader("👥 Team")
-        pm_id = selected_project.get("project_manager_user_id")
-        if pm_id:
-            pm_res = requests.get(f"{API_URL}/user/{pm_id}")
-            if pm_res.status_code == 200:
-                pm_data = pm_res.json()
-                pm_name = pm_data.get("name", "Unknown")
-            else:
-                pm_name = "Unknown"
-        else:
-            pm_name = "Not assigned"
+        pm_name = selected_project.get("project_manager_name", "Not assigned")
         st.write(f"**Project Manager:** {pm_name}")
-
         emp_res = requests.get(f"{API_URL}/project/employees/{project_id}")
         if emp_res.status_code == 200:
             employees = emp_res.json()
