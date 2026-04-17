@@ -8,6 +8,20 @@ file_bp = Blueprint("file", __name__)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+def check_storage_limit(user_id, additional_bytes):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT storage_used, storage_limit FROM User WHERE user_id = %s", (user_id,))
+    user = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    
+    if user:
+        new_usage = user['storage_used'] + additional_bytes
+        if new_usage > user['storage_limit']:
+            return False, user['storage_limit'] - user['storage_used']  # False, remaining space
+    return True, None
+
 @file_bp.route("/file/create", methods=["POST"])
 def create_file():
     data = request.json
@@ -18,6 +32,14 @@ def create_file():
 
     if not file_name or not folder_id or not user_id:
         return jsonify({"error": "Missing fields"}), 400
+
+    # Check storage limit
+    can_proceed, remaining = check_storage_limit(user_id, file_size)
+    if not can_proceed:
+        remaining_mb = remaining / (1024 * 1024)
+        return jsonify({
+            "error": f"Storage limit exceeded. Only {remaining_mb:.2f} MB remaining."
+        }), 400
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -52,6 +74,14 @@ def simulate_upload_version():
 
     if not file_id or not uploaded_by:
         return jsonify({"error": "Missing fields"}), 400
+
+    # Check storage limit
+    can_proceed, remaining = check_storage_limit(uploaded_by, file_size)
+    if not can_proceed:
+        remaining_mb = remaining / (1024 * 1024)
+        return jsonify({
+            "error": f"Storage limit exceeded. Only {remaining_mb:.2f} MB remaining."
+        }), 400
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)

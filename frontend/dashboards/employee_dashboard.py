@@ -210,18 +210,20 @@ def show_employee_dashboard():
                             }
                         )
                         if sim_res.status_code == 201:
-                            time.sleep(2)  # Give triggers time
-                            updated_user = fetch_user_data(employee_id)
+                            time.sleep(1)
+                            updated_user = safe_json(requests.get(f"{API_URL}/user/{employee_id}"))
                             if updated_user:
                                 new_used_gb = updated_user["storage_used"] / (1024**3)
                                 st.success(
                                     f"✅ Simulated version created with size {size_mb} MB. "
-                                    f"Storage now: **{new_used_gb:.2f} GB** "
-                                    f"(bytes: {updated_user['storage_used']})"
+                                    f"Storage now: **{new_used_gb:.2f} GB**"
                                 )
                             else:
                                 st.success("Simulated version created.")
                             st.rerun()
+                        elif sim_res.status_code == 400:
+                            error_msg = sim_res.json().get("error", "Storage limit exceeded")
+                            st.error(f"❌ {error_msg}")
                         else:
                             st.error("Failed to create simulated version")
         else:

@@ -106,3 +106,31 @@ def get_comments(file_id):
     cursor.close()
     conn.close()
     return jsonify(comments)
+
+@project_bp.route("/projects-with-status", methods=["GET"])
+def get_projects_with_status():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT 
+            p.project_id,
+            p.project_name,
+            p.project_manager_user_id,
+            p.created_at,
+            COALESCE(
+                (SELECT fv.status 
+                 FROM File_Version fv
+                 JOIN File f ON fv.file_id = f.file_id
+                 JOIN Folder fol ON f.folder_id = fol.folder_id
+                 WHERE fol.project_id = p.project_id
+                 ORDER BY fv.uploaded_at DESC 
+                 LIMIT 1),
+                'No Files'
+            ) as latest_status
+        FROM Project p
+        ORDER BY p.created_at DESC
+    """)
+    projects = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(projects)
