@@ -156,23 +156,25 @@ def show_admin_dashboard():
             st.error("Failed to load users")
 
     # ---------- Tab 3: Running Projects ----------
+    # ---------- Tab 3: Running Projects ----------
     with tab3:
         st.subheader("🚀 Active Projects")
-        response = requests.get(f"{API_URL}/projects")
+        response = requests.get(f"{API_URL}/projects-with-status")
         if response.status_code == 200:
             projects = response.json()
-            # Sort projects by created_at descending (latest first)
-            projects.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-            running = [
-                {
-                    "Project": p["project_name"],
-                    "PM": p["project_manager_user_id"],
-                    "Status": "In Progress" if p["project_manager_user_id"] else "Unassigned",
-                    "Created": p.get("created_at", "")[:10] if p.get("created_at") else ""
-                }
-                for p in projects
-            ]
-            st.dataframe(pd.DataFrame(running), use_container_width=True)
+            if projects:
+                running = [
+                    {
+                        "Project": p["project_name"],
+                        "PM": p["project_manager_user_id"] if p["project_manager_user_id"] else "Unassigned",
+                        "Latest Status": p.get("latest_status", "No Files"),
+                        "Created": p.get("created_at", "")[:10] if p.get("created_at") else ""
+                    }
+                    for p in projects
+                ]
+                st.dataframe(pd.DataFrame(running), use_container_width=True)
+            else:
+                st.info("No projects found")
         else:
             st.error("Failed to load projects")
 
