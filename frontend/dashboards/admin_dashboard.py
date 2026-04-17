@@ -51,6 +51,8 @@ def show_admin_dashboard():
             if not projects:
                 st.info("No projects found")
             else:
+                # Sort projects by created_at descending (latest first)
+                projects.sort(key=lambda x: x.get('created_at', ''), reverse=True)
                 df = pd.DataFrame(projects)
                 st.dataframe(df, use_container_width=True)
                 project_map = {p["project_name"]: p for p in projects}
@@ -115,11 +117,14 @@ def show_admin_dashboard():
         response = requests.get(f"{API_URL}/projects")
         if response.status_code == 200:
             projects = response.json()
+            # Sort projects by created_at descending (latest first)
+            projects.sort(key=lambda x: x.get('created_at', ''), reverse=True)
             running = [
                 {
                     "Project": p["project_name"],
                     "PM": p["project_manager_user_id"],
-                    "Status": "In Progress" if p["project_manager_user_id"] else "Unassigned"
+                    "Status": "In Progress" if p["project_manager_user_id"] else "Unassigned",
+                    "Created": p.get("created_at", "")[:10] if p.get("created_at") else ""
                 }
                 for p in projects
             ]

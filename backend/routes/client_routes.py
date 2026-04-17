@@ -47,6 +47,7 @@ def create_project():
 
     return jsonify({"message": "Project created successfully", "project_id": project_id}), 201
 
+
 @client_bp.route("/client/projects", methods=["GET"])
 def get_projects():
     client_id = request.args.get("client_id")
@@ -57,9 +58,10 @@ def get_projects():
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("""
-            SELECT project_id, project_name, description, project_manager_user_id
+            SELECT project_id, project_name, description, project_manager_user_id, created_at
             FROM Project
             WHERE client_user_id = %s
+            ORDER BY created_at DESC
         """, (client_id,))
         projects = cursor.fetchall()
     except Exception as e:

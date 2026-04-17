@@ -157,7 +157,8 @@ def show_client_dashboard():
         selected_project = st.selectbox(
             "Select Project",
             projects,
-            format_func=lambda x: f"{x['project_name']} (ID: {x['project_id']})"
+            format_func=lambda x: f"{x['project_name']} (Created: {x['created_at'][:10]})"
+            # format_func=lambda x: f"{x['project_name']} (ID: {x['project_id']})"
         )
         project_id = selected_project["project_id"]
 

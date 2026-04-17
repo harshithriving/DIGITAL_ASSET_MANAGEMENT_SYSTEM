@@ -3,11 +3,12 @@ from db.connection import get_db_connection
 
 project_bp = Blueprint("project", __name__)
 
+
 @project_bp.route("/projects", methods=["GET"])
 def get_projects():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM Project")
+    cursor.execute("SELECT * FROM Project ORDER BY created_at DESC")
     projects = cursor.fetchall()
     cursor.close()
     conn.close()
