@@ -20,7 +20,6 @@ def format_bytes(bytes_val):
         return f"{bytes_val / (1024 * 1024 * 1024):.2f} GB"
 
 def fetch_user_data(employee_id):
-    """Fetch user data with retries."""
     for attempt in range(3):
         resp = requests.get(f"{API_URL}/user/{employee_id}")
         if resp.status_code == 200:
@@ -56,7 +55,7 @@ def show_employee_dashboard():
         return
     project_map = {p["project_name"]: p for p in projects}
 
-    # --- Storage Info (Live) ---
+    # Storage info
     user = fetch_user_data(employee_id)
     if user:
         used_bytes = user["storage_used"]
@@ -77,15 +76,14 @@ def show_employee_dashboard():
             st.warning("⚠️ Storage limit exceeded! Please free up space.")
             percent = 1.0
         st.progress(percent)
-
-        # Debug: show raw bytes (remove after fixing)
-        st.caption(f"Debug: storage_used = {used_bytes} bytes")
     else:
         st.error("Failed to load storage data")
     st.divider()
 
-    tab1, tab2 = st.tabs(["📂 Current Project", "📤 Upload Edited File (Simulated)"])
+    # Main tabs
+    tab1, tab2 = st.tabs(["📂 Current Project", "📤 Upload Edited File"])
 
+    # ---------- TAB 1: Current Project (View & Download) ----------
     with tab1:
         selected_name = st.selectbox("Select Project", list(project_map.keys()), key="proj1")
         project = project_map[selected_name]
@@ -95,7 +93,6 @@ def show_employee_dashboard():
             st.write(f"**👨‍💼 PM:** {project['project_manager_user_id']}")
             st.divider()
 
-            # Files with comments and version history
             file_res = requests.get(f"{API_URL}/project/files/{project['project_id']}")
             if file_res.status_code == 200:
                 files = file_res.json()
@@ -107,7 +104,15 @@ def show_employee_dashboard():
                         approved_badge = " ✅ Approved" if f.get('has_approved') else ""
                         total_versions = f.get('total_versions', 0)
                         with st.expander(f"📄 {f['file_name']}{approved_badge} — **Total Versions: {total_versions}**"):
-                            # Comments
+                            # --- Download raw file (original version) ---
+                            raw_res = requests.get(f"{API_URL}/file/raw/{f['file_id']}")
+                            if raw_res.status_code == 200:
+                                raw_url = raw_res.json().get('download_url')
+                                st.markdown(f"[⬇ Download Raw File]({raw_url})")
+                            else:
+                                st.caption("No raw file available for download")
+
+                            # --- Comments ---
                             com_res = requests.get(f"{API_URL}/file/comments/{f['file_id']}")
                             if com_res.status_code == 200:
                                 comments = com_res.json()
@@ -120,7 +125,7 @@ def show_employee_dashboard():
                             else:
                                 st.error("Failed to load comments")
 
-                            # Version history
+                            # --- Version history (with delete button) ---
                             ver_res = requests.get(f"{API_URL}/file/versions/{f['file_id']}")
                             if ver_res.status_code == 200:
                                 versions = ver_res.json()
@@ -153,11 +158,7 @@ def show_employee_dashboard():
                                                         updated_user = fetch_user_data(employee_id)
                                                         if updated_user:
                                                             new_used_gb = updated_user["storage_used"] / (1024**3)
-                                                            st.success(
-                                                                f"✅ Version deleted. "
-                                                                f"Storage now: **{new_used_gb:.2f} GB** "
-                                                                f"(bytes: {updated_user['storage_used']})"
-                                                            )
+                                                            st.success(f"✅ Version deleted. Storage now: **{new_used_gb:.2f} GB**")
                                                         else:
                                                             st.success("Version deleted.")
                                                         st.rerun()
@@ -170,9 +171,10 @@ def show_employee_dashboard():
             else:
                 st.error("Failed to load files")
 
+    # ---------- TAB 2: Upload Edited File (Real) ----------
     with tab2:
-        st.subheader("📤 Upload Edited File (Simulated)")
-        st.caption("Enter file size in MB. After upload, storage will update automatically via database trigger.")
+        st.subheader("📤 Upload Edited File")
+        st.caption("Upload a new version of an existing file. It will be sent to the client for review.")
 
         selected_name = st.selectbox("Select Project", list(project_map.keys()), key="proj2")
         project = project_map[selected_name]
@@ -183,6 +185,7 @@ def show_employee_dashboard():
             if not files:
                 st.info("No files in this project to update.")
             else:
+                # Only show files that do NOT have an approved version
                 editable_files = [f for f in files if not f.get('has_approved', False)]
                 if not editable_files:
                     st.warning("All files in this project have been approved. No further uploads allowed.")
@@ -191,38 +194,54 @@ def show_employee_dashboard():
                     selected_file_label = st.selectbox("Select file to update", list(file_options.keys()))
                     file_id = file_options[selected_file_label]
 
-                    current_file = next((f for f in editable_files if f['file_id'] == file_id), None)
-                    default_name = current_file['file_name'] if current_file else ""
-
-                    new_file_name = st.text_input("New file name (optional)", value=default_name)
-
-                    size_mb = st.number_input("File size (MB) for this version", min_value=0.0, value=1.0, step=0.5)
-                    size_bytes = int(size_mb * 1024 * 1024)
-
-                    if st.button("🚀 Submit Simulated Version"):
-                        sim_res = requests.post(
-                            f"{API_URL}/simulate/upload/version",
-                            json={
-                                "file_id": file_id,
-                                "uploaded_by": employee_id,
-                                "file_name": new_file_name,
-                                "file_size": size_bytes
-                            }
-                        )
-                        if sim_res.status_code == 201:
-                            time.sleep(2)  # Give triggers time
+                    uploaded_file = st.file_uploader("Choose edited file (any format)", type=None)
+                    if uploaded_file and st.button("Submit New Version"):
+                        with st.spinner(f"Uploading {uploaded_file.name}..."):
+                            files_data = {'file': uploaded_file}
+                            form_data = {'file_id': file_id, 'uploaded_by': employee_id}
+                            upload_res = requests.post(
+                                f"{API_URL}/upload-version-to-imagekit",
+                                files=files_data,
+                                data=form_data
+                            )
+                        if upload_res.status_code == 201:
+                            st.success("✅ New version uploaded. It is now under client review.")
+                            time.sleep(1)
                             updated_user = fetch_user_data(employee_id)
                             if updated_user:
                                 new_used_gb = updated_user["storage_used"] / (1024**3)
-                                st.success(
-                                    f"✅ Simulated version created with size {size_mb} MB. "
-                                    f"Storage now: **{new_used_gb:.2f} GB** "
-                                    f"(bytes: {updated_user['storage_used']})"
-                                )
-                            else:
-                                st.success("Simulated version created.")
+                                st.info(f"Storage automatically updated to **{new_used_gb:.2f} GB** via trigger.")
                             st.rerun()
                         else:
-                            st.error("Failed to create simulated version")
+                            error_msg = upload_res.json().get('error', 'Unknown error') if upload_res.text else 'Upload failed'
+                            st.error(f"Upload failed: {error_msg}")
         else:
             st.error("Failed to load files")
+
+    # ---------- Optional: Simulated upload for trigger demonstration (kept as expander) ----------
+    with st.expander("🧪 Simulated Upload (for trigger demonstration)"):
+        st.caption("Enter file size in MB. This creates a simulated version without an actual file, demonstrating storage and version count triggers.")
+        selected_name = st.selectbox("Select Project", list(project_map.keys()), key="sim_proj")
+        project = project_map[selected_name]
+        file_res = requests.get(f"{API_URL}/project/files/{project['project_id']}")
+        if file_res.status_code == 200:
+            files = file_res.json()
+            editable_files = [f for f in files if not f.get('has_approved', False)]
+            if editable_files:
+                file_options = {f"{f['file_name']} (ID: {f['file_id']})": f['file_id'] for f in editable_files}
+                selected_file_label = st.selectbox("Select file", list(file_options.keys()), key="sim_file")
+                file_id = file_options[selected_file_label]
+                size_mb = st.number_input("Simulated size (MB)", min_value=0.0, value=1.0, step=0.5, key="sim_size")
+                if st.button("Simulate Upload", key="sim_button"):
+                    size_bytes = int(size_mb * 1024 * 1024)
+                    sim_res = requests.post(
+                        f"{API_URL}/simulate/upload/version",
+                        json={"file_id": file_id, "uploaded_by": employee_id, "file_size": size_bytes}
+                    )
+                    if sim_res.status_code == 201:
+                        st.success(f"Simulated version of {size_mb} MB created. Check the version history.")
+                        st.rerun()
+                    else:
+                        st.error("Failed")
+            else:
+                st.info("No files available for simulation.")

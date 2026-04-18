@@ -107,14 +107,14 @@ def get_comments(file_id):
     conn.close()
     return jsonify(comments)
 
-@project_bp.route("/file/download/<int:file_id>", methods=["GET"])
-def get_download_url(file_id):
+@project_bp.route("/file/raw/<int:file_id>", methods=["GET"])
+def get_raw_file_url(file_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("""
         SELECT imagekit_url
         FROM File_Version
-        WHERE file_id = %s AND status = 'Approved'
+        WHERE file_id = %s AND status = 'Raw'
         ORDER BY version_number DESC
         LIMIT 1
     """, (file_id,))
@@ -123,5 +123,6 @@ def get_download_url(file_id):
     conn.close()
     if version and version['imagekit_url']:
         return jsonify({"download_url": version['imagekit_url']})
-    return jsonify({"error": "No approved version found"}), 404
+    return jsonify({"error": "No raw version found"}), 404
+
 
