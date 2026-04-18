@@ -52,7 +52,7 @@ def show_admin_dashboard():
                 st.info("No projects found")
             else:
                 # Sort projects by created_at descending (latest first)
-                projects.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+                projects.sort(key=lambda x: x.get('project_id', ''), reverse=True)
                 df = pd.DataFrame(projects)
                 st.dataframe(df, use_container_width=True)
                 project_map = {p["project_name"]: p for p in projects}

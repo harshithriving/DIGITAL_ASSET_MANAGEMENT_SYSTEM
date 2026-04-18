@@ -8,7 +8,7 @@ project_bp = Blueprint("project", __name__)
 def get_projects():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM Project ORDER BY created_at DESC")
+    cursor.execute("SELECT * FROM Project ORDER BY project_id DESC")
     projects = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -106,3 +106,22 @@ def get_comments(file_id):
     cursor.close()
     conn.close()
     return jsonify(comments)
+
+@project_bp.route("/file/download/<int:file_id>", methods=["GET"])
+def get_download_url(file_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("""
+        SELECT imagekit_url
+        FROM File_Version
+        WHERE file_id = %s AND status = 'Approved'
+        ORDER BY version_number DESC
+        LIMIT 1
+    """, (file_id,))
+    version = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if version and version['imagekit_url']:
+        return jsonify({"download_url": version['imagekit_url']})
+    return jsonify({"error": "No approved version found"}), 404
+
