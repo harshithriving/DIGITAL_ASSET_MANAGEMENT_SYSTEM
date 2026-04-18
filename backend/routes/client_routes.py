@@ -58,10 +58,11 @@ def get_projects():
     cursor = conn.cursor(dictionary=True)
     try:
         cursor.execute("""
-            SELECT project_id, project_name, description, project_manager_user_id, created_at
-            FROM Project
-            WHERE client_user_id = %s
-            ORDER BY created_at DESC
+            SELECT p.project_id, p.project_name, p.description, p.project_manager_user_id, u.name as project_manager_name, p.created_at
+            FROM Project p
+            LEFT JOIN User u ON p.project_manager_user_id = u.user_id
+            WHERE p.client_user_id = %s
+            ORDER BY p.created_at DESC
         """, (client_id,))
         projects = cursor.fetchall()
     except Exception as e:

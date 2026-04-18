@@ -63,15 +63,21 @@ def show_admin_dashboard():
                 st.subheader("📌 Project Details")
                 st.write(f"**Name:** {selected_project['project_name']}")
                 st.write(f"**Description:** {selected_project['description']}")
+                
+                # ✅ NEW: Display current Project Manager name (if assigned)
+                current_pm_name = selected_project.get('project_manager_name', 'Not assigned')
+                st.write(f"**Current Project Manager:** {current_pm_name}")
 
-                # Fetch PMs
+                # Fetch PMs for assignment
                 pm_res = requests.get(f"{API_URL}/users/ProjectManager")
                 if pm_res.status_code == 200:
                     pms = pm_res.json()
                     if pms:
+                        # Filter out the currently assigned PM from the dropdown (optional but nice)
                         pm_names = [pm["name"] for pm in pms]
+                        selected_pm_name = st.selectbox("Assign New PM", pm_names)
                         pm_map = {pm["name"]: pm["user_id"] for pm in pms}
-                        selected_pm_name = st.selectbox("Select PM", pm_names)
+                        
                         if st.button("✅ Assign Project"):
                             data = {
                                 "project_id": selected_project["project_id"],
@@ -80,6 +86,7 @@ def show_admin_dashboard():
                             res = requests.post(f"{API_URL}/assign_project", json=data)
                             if res.status_code == 200:
                                 st.success("Project assigned successfully")
+                                st.rerun()
                             else:
                                 st.error("Assignment failed")
                     else:
@@ -90,45 +97,91 @@ def show_admin_dashboard():
             st.error("Failed to load projects")
 
     # ---------- Tab 2: Users & Storage ----------
+    # ---------- Tab 2: Users & Storage ----------
     with tab2:
         st.subheader("👥 Users & Storage")
-        response = requests.get(f"{API_URL}/all_users_storage")
-        if response.status_code == 200:
-            users = response.json()
+        
+        # Fetch storage data
+        storage_response = requests.get(f"{API_URL}/all_users_storage")
+        # Fetch full user data (includes user_id)
+        users_response = requests.get(f"{API_URL}/users/Employee")  # This returns user_id and name
+        # Also fetch other roles if needed
+        all_users_response = requests.get(f"{API_URL}/users/Admin")  # You'll need similar for all roles
+        
+        if storage_response.status_code == 200 and users_response.status_code == 200:
+            storage_data = storage_response.json()
+            employee_data = users_response.json()
+            
+            # Create a mapping of name to storage info
+            user_map = {}
+            for u in storage_data:
+                user_map[u["name"]] = u
+            
+            # Build complete user list with user_id from employee_data
+            users = []
+            for emp in employee_data:
+                if emp["name"] in user_map:
+                    user_info = user_map[emp["name"]]
+                    user_info["user_id"] = emp["user_id"]
+                    users.append(user_info)
+            
+            # Fetch project count for each employee
+            for u in users:
+                if u["role"] == "Employee":
+                    count_res = requests.get(f"{API_URL}/employee/project_count/{u['user_id']}")
+                    if count_res.status_code == 200:
+                        u["projects_assigned"] = count_res.json().get("project_count", 0)
+                    else:
+                        u["projects_assigned"] = "Error"
+                else:
+                    u["projects_assigned"] = "N/A"
+            
             # Convert bytes to GB for display
             for u in users:
                 u["storage_used_gb"] = u["storage_used"] / (1024**3)
                 u["storage_limit_gb"] = u["storage_limit"] / (1024**3)
+            
             df = pd.DataFrame(users)
             # Rename columns for clarity
             df = df.rename(columns={
                 "storage_used_gb": "storage_used (GB)",
                 "storage_limit_gb": "storage_limit (GB)",
                 "storage_used": "storage_used_bytes",
-                "storage_limit": "storage_limit_bytes"
+                "storage_limit": "storage_limit_bytes",
+                "projects_assigned": "projects_assigned"
             })
-            st.dataframe(df, use_container_width=True)
+            # Select and order columns
+            display_cols = ['name', 'role', 'storage_used (GB)', 'storage_limit (GB)', 'projects_assigned']
+            available_cols = [col for col in display_cols if col in df.columns]
+            st.dataframe(df[available_cols], use_container_width=True)
+            
+            # Show warning if any employee has >2 projects
+            over_assigned = df[df['role'] == 'Employee'][df['projects_assigned'] > 2]
+            if not over_assigned.empty:
+                st.warning("⚠️ Some employees are assigned to more than 2 projects (violates policy)!")
         else:
             st.error("Failed to load users")
 
     # ---------- Tab 3: Running Projects ----------
+    # ---------- Tab 3: Running Projects ----------
     with tab3:
         st.subheader("🚀 Active Projects")
-        response = requests.get(f"{API_URL}/projects")
+        response = requests.get(f"{API_URL}/projects-with-status")
         if response.status_code == 200:
             projects = response.json()
-            # Sort projects by created_at descending (latest first)
-            projects.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-            running = [
-                {
-                    "Project": p["project_name"],
-                    "PM": p["project_manager_user_id"],
-                    "Status": "In Progress" if p["project_manager_user_id"] else "Unassigned",
-                    "Created": p.get("created_at", "")[:10] if p.get("created_at") else ""
-                }
-                for p in projects
-            ]
-            st.dataframe(pd.DataFrame(running), use_container_width=True)
+            if projects:
+                running = [
+                    {
+                        "Project": p["project_name"],
+                        "Project Manager": p.get("project_manager_name", "Unassigned"),
+                        "Latest Status": p.get("latest_status", "No Files"),
+                        "Created": p.get("created_at", "")[:10] if p.get("created_at") else ""
+                    }
+                    for p in projects
+                ]
+                st.dataframe(pd.DataFrame(running), use_container_width=True)
+            else:
+                st.info("No projects found")
         else:
             st.error("Failed to load projects")
 

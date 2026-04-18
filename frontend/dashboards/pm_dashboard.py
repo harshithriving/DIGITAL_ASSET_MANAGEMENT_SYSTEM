@@ -35,7 +35,10 @@ def show_pm_dashboard():
         st.subheader("Projects Assigned To You")
         for p in projects:
             st.markdown(f"### 📌 {p['project_name']}")
-            st.write(f"Description: {p['description']}")
+            st.write(f"**Description:** {p['description']}")
+            st.write(f"**Client:** {p.get('client_name', 'Unknown')}")
+            st.write(f"**Created:** {p.get('created_at', '')[:10] if p.get('created_at') else 'N/A'}")
+            st.divider()
 
     elif menu == "👥 Assign Employees":
         st.subheader("Assign Employees")
@@ -61,8 +64,10 @@ def show_pm_dashboard():
                     }
                     assign_res = requests.post(f"{API_URL}/pm/assign_employee", json=data)
                     if assign_res.status_code != 200:
-                        st.error(f"Failed to assign {emp['name']}")
-            st.success("Employees assigned successfully")
+                        error_msg = assign_res.json().get("error", "Unknown error")
+                        st.error(f"Failed to assign {emp['name']}: {error_msg}")
+                    else:
+                        st.success(f"Assigned {emp['name']} successfully")
             st.rerun()
 
         st.divider()

@@ -145,26 +145,32 @@ def show_client_dashboard():
             }
             created_counts = {}
             error_files = []
-            for folder_name, input_text in folder_inputs.items():
-                if folder_name not in folder_map:
-                    continue
-                folder_id = folder_map[folder_name]
-                lines = [line.strip() for line in input_text.split("\n") if line.strip()]
-                count = 0
-                for line in lines:
-                    parts = line.split(",")
-                    if len(parts) != 2:
-                        error_files.append(f"Invalid format in {folder_name}: '{line}'")
+            with st.spinner("Creating files..."):
+                for folder_name, input_text in folder_inputs.items():
+                    if folder_name not in folder_map:
+                        st.warning(f"Folder '{folder_name}' not found, skipping.")
                         continue
-                    fname = parts[0].strip()
-                    size_str = parts[1].strip()
-                    try:
-                        size_mb = float(size_str)
-                        size_bytes = int(size_mb * 1024 * 1024)
-                    except ValueError:
-                        error_files.append(f"Invalid size in {folder_name}: '{size_str}'")
-                        continue
-                    create_res = requests.post(
+                    folder_id = folder_map[folder_name]
+                    lines = [line.strip() for line in input_text.split("\n") if line.strip()]
+                    count = 0
+                    for line in lines:
+                        parts = line.split(",")
+                        if len(parts) != 2:
+                            error_files.append(f"Invalid format in {folder_name}: '{line}'")
+                            continue
+                        fname = parts[0].strip()
+                        size_str = parts[1].strip()
+                        if not fname or not size_str:
+                            error_files.append(f"Missing name or size in {folder_name}: '{line}'")
+                            continue
+                        try:
+                            size_mb = float(size_str)
+                            size_bytes = int(size_mb * 1024 * 1024)   # Convert MB → bytes
+                        except ValueError:
+                            error_files.append(f"Invalid size in {folder_name}: '{size_str}'")
+                            continue
+
+                        create_res = requests.post(
                         f"{API_URL}/file/create",
                         json={
                             "file_name": fname,
@@ -175,9 +181,13 @@ def show_client_dashboard():
                     )
                     if create_res.status_code == 201:
                         count += 1
+                    elif create_res.status_code == 400:
+                        error_msg = create_res.json().get("error", "Storage limit exceeded")
+                        error_files.append(f"Storage error for {fname} in {folder_name}: {error_msg}")
+                        break  # Stop creating more files for this project
                     else:
                         error_files.append(f"Failed to create {fname} in {folder_name}")
-                if count:
+                        
                     created_counts[folder_name] = count
 
             # 5. Summary
@@ -219,20 +229,10 @@ def show_client_dashboard():
         st.subheader("📌 Project Info")
         st.write(selected_project["description"])
 
-        # Team info
+                # Team info
         st.subheader("👥 Team")
-        pm_id = selected_project.get("project_manager_user_id")
-        if pm_id:
-            pm_res = requests.get(f"{API_URL}/user/{pm_id}")
-            if pm_res.status_code == 200:
-                pm_data = pm_res.json()
-                pm_name = pm_data.get("name", "Unknown")
-            else:
-                pm_name = "Unknown"
-        else:
-            pm_name = "Not assigned"
+        pm_name = selected_project.get("project_manager_name", "Not assigned")
         st.write(f"**Project Manager:** {pm_name}")
-
         emp_res = requests.get(f"{API_URL}/project/employees/{project_id}")
         if emp_res.status_code == 200:
             employees = emp_res.json()
@@ -256,8 +256,13 @@ def show_client_dashboard():
                 st.write(f"📄 {f['file_name']} (V{f['version_number']})")
                 col1, col2 = st.columns(2)
                 if col1.button("Approve", key=f"a_{f['version_id']}"):
-                    requests.put(f"{API_URL}/file/approve/{f['version_id']}")
-                    st.rerun()
+                    approve_res = requests.put(f"{API_URL}/file/approve/{f['version_id']}")
+                    if approve_res.status_code == 200:
+                        st.success("Approved successfully")
+                        st.rerun()
+                    else:
+                        error_msg = approve_res.json().get("error", "Approval failed")
+                        st.error(f"❌ {error_msg}")
                 if col2.button("Reject", key=f"r_{f['version_id']}"):
                     requests.put(f"{API_URL}/file/reject/{f['version_id']}")
                     st.rerun()
@@ -317,12 +322,14 @@ def show_client_dashboard():
                 if upload_res.status_code == 201:
                     st.success(f"✅ {uploaded_file.name} uploaded successfully to ImageKit!")
                     st.rerun()
+                elif create_res.status_code == 400:
+                    error_msg = create_res.json().get("error", "Storage limit exceeded")
+                    st.error(f"❌ {error_msg}")
                 else:
                     error_msg = upload_res.json().get('error', 'Unknown error') if upload_res.text else 'Upload failed'
                     st.error(f"Upload failed: {error_msg}")
             else:
-                st.warning("Please select a file")
-        st.divider()
+                st.warning("Please select a file to create file")
 
         # Tree view
         folder_map_full = {f["folder_id"]: f for f in folders}

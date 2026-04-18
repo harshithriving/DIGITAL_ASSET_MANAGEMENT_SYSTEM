@@ -55,6 +55,20 @@ def upload_to_imagekit_rest(file_path, file_name):
         raise Exception(f"ImageKit upload failed: {response.text}")
 
 # -------------------- EXISTING ENDPOINTS (unchanged) --------------------
+def check_storage_limit(user_id, additional_bytes):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT storage_used, storage_limit FROM User WHERE user_id = %s", (user_id,))
+    user = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    
+    if user:
+        new_usage = user['storage_used'] + additional_bytes
+        if new_usage > user['storage_limit']:
+            return False, user['storage_limit'] - user['storage_used']  # False, remaining space
+    return True, None
+
 @file_bp.route("/file/create", methods=["POST"])
 def create_file():
     data = request.json
@@ -67,20 +81,44 @@ def create_file():
         return jsonify({"error": "Missing fields"}), 400
 
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
+    
     try:
+        # Check for duplicate file name in the same folder
+        cursor.execute("""
+            SELECT COUNT(*) as count 
+            FROM File 
+            WHERE file_name = %s AND folder_id = %s
+        """, (file_name, folder_id))
+        result = cursor.fetchone()
+        
+        if result['count'] > 0:
+            return jsonify({
+                "error": f"A file named '{file_name}' already exists in this folder. Please use a different name."
+            }), 400
+        
+        # Check storage limit
+        can_proceed, remaining = check_storage_limit(user_id, file_size)
+        if not can_proceed:
+            remaining_mb = remaining / (1024 * 1024)
+            return jsonify({
+                "error": f"Storage limit exceeded. Only {remaining_mb:.2f} MB remaining."
+            }), 400
+
         cursor.execute("""
             INSERT INTO File (file_name, file_type, folder_id)
             VALUES (%s, %s, %s)
         """, (file_name, file_name.split('.')[-1] if '.' in file_name else 'unknown', folder_id))
         file_id = cursor.lastrowid
 
+        # RAW files start at version 0
         cursor.execute("""
             INSERT INTO File_Version (file_id, version_number, uploaded_by, status, file_path, file_size)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (file_id, 1, user_id, 'Raw', None, file_size))
+        """, (file_id, 0, user_id, 'Raw', None, file_size))
 
         conn.commit()
+        
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 500
@@ -103,7 +141,43 @@ def simulate_upload_version():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
-        next_version = get_next_version(file_id)
+        # Check if file already has an approved version
+        cursor.execute("""
+            SELECT COUNT(*) as approved_count 
+            FROM File_Version 
+            WHERE file_id = %s AND status = 'Approved'
+        """, (file_id,))
+        result = cursor.fetchone()
+        if result['approved_count'] > 0:
+            return jsonify({"error": "Cannot upload new version. File already has an approved version."}), 400
+
+        # Get the latest version to check its status
+        cursor.execute("""
+            SELECT version_number, status 
+            FROM File_Version 
+            WHERE file_id = %s 
+            ORDER BY version_number DESC 
+            LIMIT 1
+        """, (file_id,))
+        latest = cursor.fetchone()
+        
+        if not latest:
+            return jsonify({"error": "File not found"}), 404
+        
+        # ✅ Allow upload for both 'Raw' and 'In-Process' files
+        if latest['status'] not in ['Raw', 'In-Process']:
+            return jsonify({"error": f"Can only upload new versions for files that are 'Raw' or 'In-Process'. Current status: {latest['status']}"}), 400
+
+        # Check storage limit
+        can_proceed, remaining = check_storage_limit(uploaded_by, file_size)
+        if not can_proceed:
+            remaining_mb = remaining / (1024 * 1024)
+            return jsonify({
+                "error": f"Storage limit exceeded. Only {remaining_mb:.2f} MB remaining."
+            }), 400
+
+        next_version = latest['version_number'] + 1
+
         cursor.execute("""
             INSERT INTO File_Version (file_id, version_number, uploaded_by, status, file_path, file_size)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -172,11 +246,42 @@ def files_for_review(project_id):
 @file_bp.route("/file/approve/<int:version_id>", methods=["PUT"])
 def approve(version_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE File_Version SET status = 'Approved' WHERE version_id = %s", (version_id,))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # Check if file already has an approved version
+        cursor.execute("""
+            SELECT f.file_id, fv.status, fv.version_number
+            FROM File_Version fv
+            JOIN File f ON fv.file_id = f.file_id
+            WHERE fv.version_id = %s
+        """, (version_id,))
+        current_version = cursor.fetchone()
+        
+        if not current_version:
+            return jsonify({"error": "Version not found"}), 404
+        
+        # Check if any approved version exists for this file (excluding current version)
+        cursor.execute("""
+            SELECT COUNT(*) as approved_count 
+            FROM File_Version 
+            WHERE file_id = %s AND status = 'Approved' AND version_id != %s
+        """, (current_version['file_id'], version_id))
+        result = cursor.fetchone()
+        
+        if result['approved_count'] > 0:
+            return jsonify({"error": "Cannot approve. This file already has an approved version."}), 400
+        
+        # Approve the version
+        cursor.execute("UPDATE File_Version SET status = 'Approved' WHERE version_id = %s", (version_id,))
+        conn.commit()
+        
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+    
     return jsonify({"message": "Approved"})
 
 @file_bp.route("/file/reject/<int:version_id>", methods=["PUT"])

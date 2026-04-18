@@ -7,7 +7,15 @@ pm_bp = Blueprint("pm", __name__)
 def get_pm_projects(user_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM Project WHERE project_manager_user_id = %s", (user_id,))
+    cursor.execute("""
+        SELECT p.*, 
+               u.name as project_manager_name,
+               c.name as client_name
+        FROM Project p
+        LEFT JOIN User u ON p.project_manager_user_id = u.user_id
+        LEFT JOIN User c ON p.client_user_id = c.user_id
+        WHERE p.project_manager_user_id = %s
+    """, (user_id,))
     projects = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -55,6 +63,20 @@ def assign_employee():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        # Check current project count for this employee
+        cursor.execute("""
+            SELECT COUNT(DISTINCT p.project_id) as project_count
+            FROM Project p
+            JOIN Folder f ON p.project_id = f.project_id
+            JOIN Permission perm ON f.folder_id = perm.folder_id
+            WHERE perm.user_id = %s
+        """, (user_id,))
+        result = cursor.fetchone()
+        current_count = result['project_count'] if result else 0
+        
+        if current_count >= 2:
+            return jsonify({"error": "Employee can only be assigned to maximum 2 projects"}), 400
+
         cursor.execute("SELECT folder_id FROM Folder WHERE project_id = %s AND is_root = 1", (project_id,))
         root = cursor.fetchone()
         if not root:
@@ -72,7 +94,7 @@ def assign_employee():
     finally:
         cursor.close()
         conn.close()
-    return jsonify({"message": "Employee assigned successfully"})
+    return jsonify({"message": "Employee assigned successfully"}), 200
 
 @pm_bp.route("/project/employees/<int:project_id>", methods=["GET"])
 def get_project_employees(project_id):
