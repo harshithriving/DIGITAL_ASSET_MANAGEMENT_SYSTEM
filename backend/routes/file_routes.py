@@ -33,30 +33,45 @@ def create_file():
     if not file_name or not folder_id or not user_id:
         return jsonify({"error": "Missing fields"}), 400
 
-    # Check storage limit
-    can_proceed, remaining = check_storage_limit(user_id, file_size)
-    if not can_proceed:
-        remaining_mb = remaining / (1024 * 1024)
-        return jsonify({
-            "error": f"Storage limit exceeded. Only {remaining_mb:.2f} MB remaining."
-        }), 400
-
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
+    
     try:
+        # Check for duplicate file name in the same folder
+        cursor.execute("""
+            SELECT COUNT(*) as count 
+            FROM File 
+            WHERE file_name = %s AND folder_id = %s
+        """, (file_name, folder_id))
+        result = cursor.fetchone()
+        
+        if result['count'] > 0:
+            return jsonify({
+                "error": f"A file named '{file_name}' already exists in this folder. Please use a different name."
+            }), 400
+        
+        # Check storage limit
+        can_proceed, remaining = check_storage_limit(user_id, file_size)
+        if not can_proceed:
+            remaining_mb = remaining / (1024 * 1024)
+            return jsonify({
+                "error": f"Storage limit exceeded. Only {remaining_mb:.2f} MB remaining."
+            }), 400
+
         cursor.execute("""
             INSERT INTO File (file_name, file_type, folder_id)
             VALUES (%s, %s, %s)
         """, (file_name, file_name.split('.')[-1] if '.' in file_name else 'unknown', folder_id))
         file_id = cursor.lastrowid
 
-        # ✅ RAW files start at version 0
+        # RAW files start at version 0
         cursor.execute("""
             INSERT INTO File_Version (file_id, version_number, uploaded_by, status, file_path, file_size)
             VALUES (%s, %s, %s, %s, %s, %s)
         """, (file_id, 0, user_id, 'Raw', None, file_size))
 
         conn.commit()
+        
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 500
