@@ -15,6 +15,16 @@ def create_project():
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
+        conn.start_transaction()   # Start transaction
+
+        # Check for duplicate project name for this client
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM Project
+            WHERE project_name = %s AND client_user_id = %s
+        """, (project_name, client_user_id))
+        if cursor.fetchone()[0] > 0:
+            raise Exception("A project with this name already exists for this client.")
+
         # Insert project
         cursor.execute("""
             INSERT INTO Project (project_name, description, client_user_id)
@@ -37,10 +47,10 @@ def create_project():
                 VALUES (%s, %s, %s, %s)
             """, (folder, project_id, root_id, 0))
 
-        conn.commit()
+        conn.commit()   # Commit transaction
     except Exception as e:
-        conn.rollback()
-        return jsonify({"error": str(e)}), 500
+        conn.rollback()   # Rollback on any error
+        return jsonify({"error": str(e)}), 400   # Use 400 for duplicate/validation errors
     finally:
         cursor.close()
         conn.close()

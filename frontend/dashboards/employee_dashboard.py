@@ -27,6 +27,14 @@ def fetch_user_data(employee_id):
         time.sleep(0.5)
     return None
 
+def get_file_latest_version(file_id):
+    resp = requests.get(f"{API_URL}/file/versions/{file_id}")
+    if resp.status_code == 200:
+        versions = resp.json()
+        if versions:
+            return versions[0]
+    return None
+
 def show_employee_dashboard():
     col1, col2 = st.columns([8, 1])
     with col2:
@@ -80,10 +88,8 @@ def show_employee_dashboard():
         st.error("Failed to load storage data")
     st.divider()
 
-    # Main tabs
-    tab1, tab2 = st.tabs(["📂 Current Project", "📤 Upload Edited File"])
+    tab1, tab2 = st.tabs(["📂 Current Project", "📤 Upload New / Edit Files"])
 
-    # ---------- TAB 1: Current Project (View & Download) ----------
     with tab1:
         selected_name = st.selectbox("Select Project", list(project_map.keys()), key="proj1")
         project = project_map[selected_name]
@@ -100,191 +106,231 @@ def show_employee_dashboard():
                 if not files:
                     st.info("No files in this project")
                 else:
+                    # Categorize files
+                    raw_files = []
+                    in_process_files = []
+                    approved_files = []
                     for f in files:
-                        approved_badge = " ✅ Approved" if f.get('has_approved') else ""
-                        total_versions = f.get('total_versions', 0)
-                        with st.expander(f"📄 {f['file_name']}{approved_badge} — **Total Versions: {total_versions}**"):
-                            # --- Download raw file (original version) ---
-                            raw_res = requests.get(f"{API_URL}/file/raw/{f['file_id']}")
-                            if raw_res.status_code == 200:
-                                raw_url = raw_res.json().get('download_url')
-                                st.markdown(f"[⬇ Download Raw File]({raw_url})")
-                            else:
-                                st.caption("No raw file available for download")
-
-                            # --- Comments ---
-                            com_res = requests.get(f"{API_URL}/file/comments/{f['file_id']}")
-                            if com_res.status_code == 200:
-                                comments = com_res.json()
-                                if comments:
-                                    st.markdown("**Comments:**")
-                                    for c in comments:
-                                        st.info(f"User {c['user_id']}: {c['comment_text']}")
+                        if f.get('has_approved', False):
+                            approved_files.append(f)
+                        else:
+                            latest = get_file_latest_version(f['file_id'])
+                            if latest:
+                                if latest['status'] == 'Raw':
+                                    raw_files.append(f)
+                                elif latest['status'] == 'In-Process':
+                                    in_process_files.append(f)
                                 else:
-                                    st.caption("No comments yet.")
+                                    raw_files.append(f)
                             else:
-                                st.error("Failed to load comments")
+                                raw_files.append(f)
 
-                            # --- Version history (with delete button) ---
-                            ver_res = requests.get(f"{API_URL}/file/versions/{f['file_id']}")
-                            if ver_res.status_code == 200:
-                                versions = ver_res.json()
-                                if versions:
-                                    st.markdown("**Version History:**")
-                                    for v in versions:
-                                        size_str = format_bytes(v.get('file_size', 0))
-                                        uploaded_at = v.get('uploaded_at', '')
-                                        if uploaded_at:
-                                            try:
-                                                dt = datetime.fromisoformat(uploaded_at.replace('Z', '+00:00'))
-                                                uploaded_at = dt.strftime("%Y-%m-%d %H:%M")
-                                            except:
-                                                pass
-                                        col_a, col_b = st.columns([10, 2])
-                                        with col_a:
-                                            st.write(
-                                                f"- v{v['version_number']} – **{v['status']}** – {size_str} – "
-                                                f"by User {v['uploaded_by']} at {uploaded_at}"
-                                            )
-                                        with col_b:
-                                            if v['uploaded_by'] == employee_id and v['status'] != 'Approved':
-                                                if st.button("🗑️", key=f"del_{v['version_id']}"):
-                                                    del_res = requests.delete(
-                                                        f"{API_URL}/file/version/{v['version_id']}",
-                                                        json={"user_id": employee_id}
-                                                    )
-                                                    if del_res.status_code == 200:
-                                                        time.sleep(2)
-                                                        updated_user = fetch_user_data(employee_id)
-                                                        if updated_user:
-                                                            new_used_gb = updated_user["storage_used"] / (1024**3)
-                                                            st.success(f"✅ Version deleted. Storage now: **{new_used_gb:.2f} GB**")
+                    # Helper function to display comments safely
+                    def display_comments(file_id):
+                        com_res = requests.get(f"{API_URL}/file/comments/{file_id}")
+                        if com_res.status_code == 200:
+                            comments = com_res.json()
+                            if comments:
+                                st.markdown("**Comments:**")
+                                for c in comments:
+                                    # Safe extraction: if 'name' exists use it, else use 'user_id'
+                                    if 'name' in c:
+                                        commenter = c['name']
+                                    elif 'user_id' in c:
+                                        commenter = f"User {c['user_id']}"
+                                    else:
+                                        commenter = "Unknown user"
+                                    st.info(f"{commenter}: {c['comment_text']}")
+                            else:
+                                st.caption("No comments yet.")
+                        else:
+                            st.error("Failed to load comments")
+
+                    # Raw Files
+                    if raw_files:
+                        st.markdown("### 📂 Raw Files (Client Uploads)")
+                        for f in raw_files:
+                            total_versions = f.get('total_versions', 0)
+                            with st.expander(f"📄 {f['file_name']} — **Total Versions: {total_versions}**"):
+                                raw_res = requests.get(f"{API_URL}/file/raw/{f['file_id']}")
+                                if raw_res.status_code == 200:
+                                    raw_url = raw_res.json().get('download_url')
+                                    st.markdown(f"[⬇ Download Raw File]({raw_url})")
+                                else:
+                                    st.caption("No raw file available for download")
+                                display_comments(f['file_id'])
+                                # Version history
+                                ver_res = requests.get(f"{API_URL}/file/versions/{f['file_id']}")
+                                if ver_res.status_code == 200:
+                                    versions = ver_res.json()
+                                    if versions:
+                                        st.markdown("**Version History:**")
+                                        for v in versions:
+                                            size_str = format_bytes(v.get('file_size', 0))
+                                            uploaded_at = v.get('uploaded_at', '')
+                                            if uploaded_at:
+                                                try:
+                                                    dt = datetime.fromisoformat(uploaded_at.replace('Z', '+00:00'))
+                                                    uploaded_at = dt.strftime("%Y-%m-%d %H:%M")
+                                                except:
+                                                    pass
+                                            st.write(f"- v{v['version_number']} – **{v['status']}** – {size_str} – by User {v['uploaded_by']} at {uploaded_at}")
+                                    else:
+                                        st.caption("No version history.")
+                                else:
+                                    st.error("Failed to load version history")
+
+                    # In-Process Files
+                    if in_process_files:
+                        st.markdown("### 🔄 In-Process Files (Awaiting Client Review)")
+                        for f in in_process_files:
+                            total_versions = f.get('total_versions', 0)
+                            with st.expander(f"📄 {f['file_name']} — **Total Versions: {total_versions}**"):
+                                display_comments(f['file_id'])
+                                ver_res = requests.get(f"{API_URL}/file/versions/{f['file_id']}")
+                                if ver_res.status_code == 200:
+                                    versions = ver_res.json()
+                                    if versions:
+                                        st.markdown("**Version History:**")
+                                        for v in versions:
+                                            size_str = format_bytes(v.get('file_size', 0))
+                                            uploaded_at = v.get('uploaded_at', '')
+                                            if uploaded_at:
+                                                try:
+                                                    dt = datetime.fromisoformat(uploaded_at.replace('Z', '+00:00'))
+                                                    uploaded_at = dt.strftime("%Y-%m-%d %H:%M")
+                                                except:
+                                                    pass
+                                            col_a, col_b = st.columns([10, 2])
+                                            with col_a:
+                                                st.write(f"- v{v['version_number']} – **{v['status']}** – {size_str} – by User {v['uploaded_by']} at {uploaded_at}")
+                                            with col_b:
+                                                if v == versions[0] and v['uploaded_by'] == employee_id and v['status'] == 'In-Process':
+                                                    if st.button("🗑️", key=f"del_{v['version_id']}"):
+                                                        del_res = requests.delete(f"{API_URL}/file/version/{v['version_id']}", json={"user_id": employee_id})
+                                                        if del_res.status_code == 200:
+                                                            time.sleep(2)
+                                                            updated_user = fetch_user_data(employee_id)
+                                                            if updated_user:
+                                                                new_used_gb = updated_user["storage_used"] / (1024**3)
+                                                                st.success(f"✅ Version deleted. Storage now: **{new_used_gb:.2f} GB**")
+                                                            else:
+                                                                st.success("Version deleted.")
+                                                            st.rerun()
                                                         else:
-                                                            st.success("Version deleted.")
-                                                        st.rerun()
-                                                    else:
-                                                        st.error("Delete failed")
+                                                            st.error("Delete failed")
+                                    else:
+                                        st.caption("No version history.")
                                 else:
-                                    st.caption("No version history.")
-                            else:
-                                st.error("Failed to load version history")
+                                    st.error("Failed to load version history")
+
+                    # Approved Files
+                    if approved_files:
+                        st.markdown("### ✅ Approved Files")
+                        for f in approved_files:
+                            total_versions = f.get('total_versions', 0)
+                            with st.expander(f"📄 {f['file_name']} ✅ Approved — **Total Versions: {total_versions}**"):
+                                approved_res = requests.get(f"{API_URL}/file/download/{f['file_id']}")
+                                if approved_res.status_code == 200:
+                                    approved_url = approved_res.json().get('download_url')
+                                    st.markdown(f"[⬇ Download Approved File]({approved_url})")
+                                else:
+                                    st.caption("No approved version available for download")
+                                display_comments(f['file_id'])
+                                ver_res = requests.get(f"{API_URL}/file/versions/{f['file_id']}")
+                                if ver_res.status_code == 200:
+                                    versions = ver_res.json()
+                                    if versions:
+                                        st.markdown("**Version History:**")
+                                        for v in versions:
+                                            size_str = format_bytes(v.get('file_size', 0))
+                                            uploaded_at = v.get('uploaded_at', '')
+                                            if uploaded_at:
+                                                try:
+                                                    dt = datetime.fromisoformat(uploaded_at.replace('Z', '+00:00'))
+                                                    uploaded_at = dt.strftime("%Y-%m-%d %H:%M")
+                                                except:
+                                                    pass
+                                            st.write(f"- v{v['version_number']} – **{v['status']}** – {size_str} – by User {v['uploaded_by']} at {uploaded_at}")
+                                    else:
+                                        st.caption("No version history.")
+                                else:
+                                    st.error("Failed to load version history")
+
             else:
                 st.error("Failed to load files")
 
-    # ---------- TAB 2: Upload Edited File (Real) ----------
+    # ---------- TAB 2: Upload New / Edit Files (unchanged, keep as before) ----------
     with tab2:
+        # ... (keep your existing code for uploads) ...
         st.subheader("📤 Upload New File or Update Existing File")
-        st.caption("Enter file size in MB. After upload, storage will update automatically via database trigger.")
-
         selected_name = st.selectbox("Select Project", list(project_map.keys()), key="proj2")
         project = project_map[selected_name]
-
-        # Get folder structure for the project
         folder_res = requests.get(f"{API_URL}/project/full/{project['project_id']}")
         folder_data = safe_json(folder_res)
-        
         if folder_res.status_code == 200 and folder_data:
             folders = folder_data.get("folders", [])
-            # Filter out root folders, show only subfolders for file upload
             upload_folders = [f for f in folders if f.get("folder_name") not in ["Root Folder"]]
             folder_map = {f["folder_name"]: f["folder_id"] for f in upload_folders}
-            
-            # Option 1: Upload New File
             st.markdown("### 📤 Upload New File")
-            col1, col2 = st.columns(2)
-            with col1:
-                new_file_name = st.text_input("File Name", key="new_file_name")
-                new_file_size_mb = st.number_input("File size (MB)", min_value=0.0, value=1.0, step=0.5, key="new_file_size")
-                selected_folder = st.selectbox("Select Folder", list(folder_map.keys()), key="new_file_folder")
-            with col2:
-                st.write("")
-                st.write("")
-                st.info("💡 Tip: Choose the appropriate folder for your file type (Images, Videos, Audio, Others)")
-            
-            if st.button("📤 Create New File", key="create_new_file"):
-                if not new_file_name:
-                    st.warning("Please enter a file name")
+            selected_folder = st.selectbox("Select Folder", list(folder_map.keys()), key="new_file_folder")
+            uploaded_file = st.file_uploader("Choose a file to upload", type=None, key="new_file_upload")
+            if st.button("📤 Upload New File", key="create_new_file"):
+                if uploaded_file is None:
+                    st.warning("Please select a file to upload")
                 else:
-                    size_bytes = int(new_file_size_mb * 1024 * 1024)
-                    create_res = requests.post(
-                        f"{API_URL}/file/create",
-                        json={
-                            "file_name": new_file_name,
-                            "folder_id": folder_map[selected_folder],
-                            "user_id": employee_id,
-                            "file_size": size_bytes
-                        }
-                    )
-                    if create_res.status_code == 201:
-                        st.success(f"✅ New file '{new_file_name}' created with size {new_file_size_mb} MB")
+                    with st.spinner(f"Uploading {uploaded_file.name} to {selected_folder}..."):
+                        files = {'file': uploaded_file}
+                        data = {'folder_id': folder_map[selected_folder], 'uploaded_by': employee_id}
+                        upload_res = requests.post(f"{API_URL}/upload-to-imagekit", files=files, data=data)
+                    if upload_res.status_code == 201:
+                        st.success(f"✅ File '{uploaded_file.name}' uploaded successfully to ImageKit!")
                         st.rerun()
-                    elif create_res.status_code == 400:
-                        error_msg = create_res.json().get("error", "Storage limit exceeded")
-                        st.error(f"❌ {error_msg}")
                     else:
-                        st.error("Failed to create file")
-            
+                        error_msg = upload_res.json().get('error', 'Unknown error') if upload_res.text else 'Upload failed'
+                        st.error(f"Upload failed: {error_msg}")
             st.divider()
-            
-            # Option 2: Update Existing File
-            st.markdown("### 🔄 Update Existing File")
-            
+            st.markdown("### Update Existing File (Upload New Version)")
+            st.caption("You can upload a new version only for files with status 'In-Process'.")
             file_res = requests.get(f"{API_URL}/project/files/{project['project_id']}")
             if file_res.status_code == 200:
                 files = file_res.json()
                 if not files:
                     st.info("No files in this project to update.")
                 else:
-                # Only show files that do NOT have an approved version
-                    # Filter files that do NOT have an approved version (editable)
-                    editable_files = [f for f in files if not f.get('has_approved', False)]
+                    editable_files = [f for f in files if f.get('has_in_process', False) and not f.get('has_approved', False)]
                     if not editable_files:
-                        st.warning("All files in this project have been approved. No further uploads allowed.")
+                        st.info("All files have been approved. No further uploads are allowed.")
                     else:
                         file_options = {f"{f['file_name']} (ID: {f['file_id']})": f['file_id'] for f in editable_files}
                         selected_file_label = st.selectbox("Select file to update", list(file_options.keys()), key="update_file")
                         file_id = file_options[selected_file_label]
-
-                        current_file = next((f for f in editable_files if f['file_id'] == file_id), None)
-                        default_name = current_file['file_name'] if current_file else ""
-
-                        new_version_name = st.text_input("New version name (optional)", value=default_name, key="version_name")
-
-                        version_size_mb = st.number_input("Version size (MB)", min_value=0.0, value=1.0, step=0.5, key="version_size")
-                        version_size_bytes = int(version_size_mb * 1024 * 1024)
-
-                        if st.button("🚀 Submit New Version", key="submit_version"):
-                            sim_res = requests.post(
-                                f"{API_URL}/simulate/upload/version",
-                                json={
-                                    "file_id": file_id,
-                                    "uploaded_by": employee_id,
-                                    "file_name": new_version_name,
-                                    "file_size": version_size_bytes
-                                }
-                            )
-                            if sim_res.status_code == 201:
+                        new_version_file = st.file_uploader("Choose new version file", type=None, key="version_file")
+                        if new_version_file and st.button("🚀 Submit New Version", key="submit_version"):
+                            with st.spinner(f"Uploading new version of {new_version_file.name}..."):
+                                files = {'file': new_version_file}
+                                data = {'file_id': file_id, 'uploaded_by': employee_id}
+                                upload_res = requests.post(f"{API_URL}/upload-version-to-imagekit", files=files, data=data)
+                            if upload_res.status_code == 201:
+                                st.success("✅ New version uploaded. It is now under client review.")
                                 time.sleep(1)
-                                updated_user = safe_json(requests.get(f"{API_URL}/user/{employee_id}"))
+                                updated_user = fetch_user_data(employee_id)
                                 if updated_user:
                                     new_used_gb = updated_user["storage_used"] / (1024**3)
-                                    st.success(f"✅ New version created. Storage now: {new_used_gb:.2f} GB")
-                                else:
-                                    st.success("New version created.")
+                                    st.info(f"Storage automatically updated to **{new_used_gb:.2f} GB** via trigger.")
                                 st.rerun()
-                            elif sim_res.status_code == 400:
-                                error_msg = sim_res.json().get("error", "Upload failed")
-                                st.error(f"❌ {error_msg}")
                             else:
-                                st.error("Failed to create version")
+                                error_msg = upload_res.json().get('error', 'Unknown error') if upload_res.text else 'Upload failed'
+                                st.error(f"Upload failed: {error_msg}")
             else:
                 st.error("Failed to load files")
         else:
             st.error("Failed to load folder structure")
 
-    # ---------- Optional: Simulated upload for trigger demonstration (kept as expander) ----------
+    # Simulated upload expander (unchanged)
     with st.expander("🧪 Simulated Upload (for trigger demonstration)"):
-        st.caption("Enter file size in MB. This creates a simulated version without an actual file, demonstrating storage and version count triggers.")
+        # ... (keep your existing simulated upload code) ...
+        st.caption("Creates a simulated version without an actual file, demonstrating storage and version count triggers.")
         selected_name = st.selectbox("Select Project", list(project_map.keys()), key="sim_proj")
         project = project_map[selected_name]
         file_res = requests.get(f"{API_URL}/project/files/{project['project_id']}")
@@ -309,3 +355,7 @@ def show_employee_dashboard():
                         st.error("Failed")
             else:
                 st.info("No files available for simulation.")
+
+if __name__ == "__main__":
+    # This is not the main entry point; the app uses the function above.
+    pass

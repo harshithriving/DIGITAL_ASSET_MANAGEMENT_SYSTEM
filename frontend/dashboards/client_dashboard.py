@@ -171,23 +171,22 @@ def show_client_dashboard():
                             continue
 
                         create_res = requests.post(
-                        f"{API_URL}/file/create",
-                        json={
-                            "file_name": fname,
-                            "folder_id": folder_id,
-                            "user_id": st.session_state.user_id,
-                            "file_size": size_bytes
-                        }
-                    )
-                    if create_res.status_code == 201:
-                        count += 1
-                    elif create_res.status_code == 400:
-                        error_msg = create_res.json().get("error", "Storage limit exceeded")
-                        error_files.append(f"Storage error for {fname} in {folder_name}: {error_msg}")
-                        break  # Stop creating more files for this project
-                    else:
-                        error_files.append(f"Failed to create {fname} in {folder_name}")
-                        
+                            f"{API_URL}/file/create",
+                            json={
+                                "file_name": fname,
+                                "folder_id": folder_id,
+                                "user_id": st.session_state.user_id,
+                                "file_size": size_bytes
+                            }
+                        )
+                        if create_res.status_code == 201:
+                            count += 1
+                        elif create_res.status_code == 400:
+                            error_msg = create_res.json().get("error", "Storage limit exceeded")
+                            error_files.append(f"Storage error for {fname} in {folder_name}: {error_msg}")
+                            break  # Stop creating more files for this project
+                        else:
+                            error_files.append(f"Failed to create {fname} in {folder_name}")
                     created_counts[folder_name] = count
 
             # 5. Summary
@@ -229,7 +228,7 @@ def show_client_dashboard():
         st.subheader("📌 Project Info")
         st.write(selected_project["description"])
 
-                # Team info
+        # Team info
         st.subheader("👥 Team")
         pm_name = selected_project.get("project_manager_name", "Not assigned")
         st.write(f"**Project Manager:** {pm_name}")
@@ -254,6 +253,13 @@ def show_client_dashboard():
         else:
             for f in review:
                 st.write(f"📄 {f['file_name']} (V{f['version_number']})")
+                # Download link for the in-process version
+                download_res = requests.get(f"{API_URL}/file/inprocess/{f['file_id']}")
+                if download_res.status_code == 200:
+                    download_url = download_res.json().get('download_url')
+                    st.markdown(f"[⬇ Download this version]({download_url})")
+                else:
+                    st.caption("File not available for download")
                 col1, col2 = st.columns(2)
                 if col1.button("Approve", key=f"a_{f['version_id']}"):
                     approve_res = requests.put(f"{API_URL}/file/approve/{f['version_id']}")
@@ -322,14 +328,14 @@ def show_client_dashboard():
                 if upload_res.status_code == 201:
                     st.success(f"✅ {uploaded_file.name} uploaded successfully to ImageKit!")
                     st.rerun()
-                elif create_res.status_code == 400:
-                    error_msg = create_res.json().get("error", "Storage limit exceeded")
+                elif upload_res.status_code == 400:
+                    error_msg = upload_res.json().get("error", "Storage limit exceeded")
                     st.error(f"❌ {error_msg}")
                 else:
                     error_msg = upload_res.json().get('error', 'Unknown error') if upload_res.text else 'Upload failed'
                     st.error(f"Upload failed: {error_msg}")
             else:
-                st.warning("Please select a file to create file")
+                st.warning("Please select a file to upload")
 
         # Tree view
         folder_map_full = {f["folder_id"]: f for f in folders}

@@ -19,11 +19,9 @@ IMAGEKIT_PRIVATE_KEY = os.getenv('IMAGEKIT_PRIVATE_KEY')
 IMAGEKIT_PUBLIC_KEY = os.getenv('IMAGEKIT_PUBLIC_KEY')
 IMAGEKIT_URL_ENDPOINT = os.getenv('IMAGEKIT_URL_ENDPOINT')
 
-# Validate credentials
 if not IMAGEKIT_PRIVATE_KEY or not IMAGEKIT_PUBLIC_KEY or not IMAGEKIT_URL_ENDPOINT:
     raise ValueError("Missing ImageKit credentials in .env file")
 
-# Helper to get next version number
 def get_next_version(file_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -33,14 +31,13 @@ def get_next_version(file_id):
     conn.close()
     return (result['max_version'] or 0) + 1
 
-
 def upload_to_imagekit_rest(file_path, file_name):
     """Upload using Basic Authentication with private key."""
     with open(file_path, "rb") as f:
         files = {'file': (file_name, f)}
         data = {
             'fileName': file_name,
-            'useUniqueFileName': 'true',   # must be string 'true' or 'false'
+            'useUniqueFileName': 'true',
             'folder': 'dam_system'
         }
         response = requests.post(
@@ -54,7 +51,6 @@ def upload_to_imagekit_rest(file_path, file_name):
     else:
         raise Exception(f"ImageKit upload failed: {response.text}")
 
-# -------------------- EXISTING ENDPOINTS (unchanged) --------------------
 def check_storage_limit(user_id, additional_bytes):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -62,13 +58,22 @@ def check_storage_limit(user_id, additional_bytes):
     user = cursor.fetchone()
     cursor.close()
     conn.close()
-    
     if user:
         new_usage = user['storage_used'] + additional_bytes
         if new_usage > user['storage_limit']:
-            return False, user['storage_limit'] - user['storage_used']  # False, remaining space
+            return False, user['storage_limit'] - user['storage_used']
     return True, None
 
+def get_user_role(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT role FROM User WHERE user_id = %s", (user_id,))
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return result['role'] if result else None
+
+# -------------------- ENDPOINTS --------------------
 @file_bp.route("/file/create", methods=["POST"])
 def create_file():
     data = request.json
@@ -82,50 +87,37 @@ def create_file():
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    
     try:
-        # Check for duplicate file name in the same folder
-        cursor.execute("""
-            SELECT COUNT(*) as count 
-            FROM File 
-            WHERE file_name = %s AND folder_id = %s
-        """, (file_name, folder_id))
-        result = cursor.fetchone()
-        
-        if result['count'] > 0:
-            return jsonify({
-                "error": f"A file named '{file_name}' already exists in this folder. Please use a different name."
-            }), 400
-        
-        # Check storage limit
+        # Check duplicate
+        cursor.execute("SELECT COUNT(*) as count FROM File WHERE file_name = %s AND folder_id = %s", (file_name, folder_id))
+        if cursor.fetchone()['count'] > 0:
+            return jsonify({"error": f"A file named '{file_name}' already exists in this folder."}), 400
+
+        # Storage check
         can_proceed, remaining = check_storage_limit(user_id, file_size)
         if not can_proceed:
-            remaining_mb = remaining / (1024 * 1024)
-            return jsonify({
-                "error": f"Storage limit exceeded. Only {remaining_mb:.2f} MB remaining."
-            }), 400
+            return jsonify({"error": f"Storage limit exceeded. Only {remaining/(1024*1024):.2f} MB remaining."}), 400
 
-        cursor.execute("""
-            INSERT INTO File (file_name, file_type, folder_id)
-            VALUES (%s, %s, %s)
-        """, (file_name, file_name.split('.')[-1] if '.' in file_name else 'unknown', folder_id))
+        cursor.execute("INSERT INTO File (file_name, file_type, folder_id) VALUES (%s, %s, %s)",
+                       (file_name, file_name.split('.')[-1] if '.' in file_name else 'unknown', folder_id))
         file_id = cursor.lastrowid
 
-        # RAW files start at version 0
+        # Determine status based on role
+        user_role = get_user_role(user_id)
+        status = 'In-Process' if user_role == 'Employee' else 'Raw'
+
         cursor.execute("""
             INSERT INTO File_Version (file_id, version_number, uploaded_by, status, file_path, file_size)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (file_id, 0, user_id, 'Raw', None, file_size))
+        """, (file_id, 1, user_id, status, None, file_size))   # version 1 for real files
 
         conn.commit()
-        
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 500
     finally:
         cursor.close()
         conn.close()
-
     return jsonify({"message": "File created", "file_id": file_id}), 201
 
 @file_bp.route("/simulate/upload/version", methods=["POST"])
@@ -142,42 +134,23 @@ def simulate_upload_version():
     cursor = conn.cursor(dictionary=True)
     try:
         # Check if file already has an approved version
-        cursor.execute("""
-            SELECT COUNT(*) as approved_count 
-            FROM File_Version 
-            WHERE file_id = %s AND status = 'Approved'
-        """, (file_id,))
-        result = cursor.fetchone()
-        if result['approved_count'] > 0:
+        cursor.execute("SELECT COUNT(*) as approved_count FROM File_Version WHERE file_id = %s AND status = 'Approved'", (file_id,))
+        if cursor.fetchone()['approved_count'] > 0:
             return jsonify({"error": "Cannot upload new version. File already has an approved version."}), 400
 
-        # Get the latest version to check its status
-        cursor.execute("""
-            SELECT version_number, status 
-            FROM File_Version 
-            WHERE file_id = %s 
-            ORDER BY version_number DESC 
-            LIMIT 1
-        """, (file_id,))
+        cursor.execute("SELECT version_number, status FROM File_Version WHERE file_id = %s ORDER BY version_number DESC LIMIT 1", (file_id,))
         latest = cursor.fetchone()
-        
         if not latest:
             return jsonify({"error": "File not found"}), 404
-        
-        # ✅ Allow upload for both 'Raw' and 'In-Process' files
         if latest['status'] not in ['Raw', 'In-Process']:
             return jsonify({"error": f"Can only upload new versions for files that are 'Raw' or 'In-Process'. Current status: {latest['status']}"}), 400
 
-        # Check storage limit
+        # Storage check
         can_proceed, remaining = check_storage_limit(uploaded_by, file_size)
         if not can_proceed:
-            remaining_mb = remaining / (1024 * 1024)
-            return jsonify({
-                "error": f"Storage limit exceeded. Only {remaining_mb:.2f} MB remaining."
-            }), 400
+            return jsonify({"error": f"Storage limit exceeded. Only {remaining/(1024*1024):.2f} MB remaining."}), 400
 
         next_version = latest['version_number'] + 1
-
         cursor.execute("""
             INSERT INTO File_Version (file_id, version_number, uploaded_by, status, file_path, file_size)
             VALUES (%s, %s, %s, %s, %s, %s)
@@ -190,7 +163,6 @@ def simulate_upload_version():
     finally:
         cursor.close()
         conn.close()
-
     return jsonify({"message": "Simulated version uploaded", "version_id": cursor.lastrowid}), 201
 
 @file_bp.route("/file/version/<int:version_id>", methods=["DELETE"])
@@ -203,11 +175,7 @@ def delete_version(version_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
-        cursor.execute("""
-            SELECT version_id, file_id, uploaded_by, status, file_size
-            FROM File_Version
-            WHERE version_id = %s
-        """, (version_id,))
+        cursor.execute("SELECT version_id, file_id, uploaded_by, status, file_size FROM File_Version WHERE version_id = %s", (version_id,))
         version = cursor.fetchone()
         if not version:
             return jsonify({"error": "Version not found"}), 404
@@ -224,7 +192,6 @@ def delete_version(version_id):
     finally:
         cursor.close()
         conn.close()
-
     return jsonify({"message": "Version deleted successfully"}), 200
 
 @file_bp.route("/file/review/<int:project_id>", methods=["GET"])
@@ -248,40 +215,23 @@ def approve(version_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
-        # Check if file already has an approved version
-        cursor.execute("""
-            SELECT f.file_id, fv.status, fv.version_number
-            FROM File_Version fv
-            JOIN File f ON fv.file_id = f.file_id
-            WHERE fv.version_id = %s
-        """, (version_id,))
+        cursor.execute("SELECT f.file_id, fv.status, fv.version_number FROM File_Version fv JOIN File f ON fv.file_id = f.file_id WHERE fv.version_id = %s", (version_id,))
         current_version = cursor.fetchone()
-        
         if not current_version:
             return jsonify({"error": "Version not found"}), 404
-        
-        # Check if any approved version exists for this file (excluding current version)
-        cursor.execute("""
-            SELECT COUNT(*) as approved_count 
-            FROM File_Version 
-            WHERE file_id = %s AND status = 'Approved' AND version_id != %s
-        """, (current_version['file_id'], version_id))
-        result = cursor.fetchone()
-        
-        if result['approved_count'] > 0:
+
+        cursor.execute("SELECT COUNT(*) as approved_count FROM File_Version WHERE file_id = %s AND status = 'Approved' AND version_id != %s", (current_version['file_id'], version_id))
+        if cursor.fetchone()['approved_count'] > 0:
             return jsonify({"error": "Cannot approve. This file already has an approved version."}), 400
-        
-        # Approve the version
+
         cursor.execute("UPDATE File_Version SET status = 'Approved' WHERE version_id = %s", (version_id,))
         conn.commit()
-        
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 500
     finally:
         cursor.close()
         conn.close()
-    
     return jsonify({"message": "Approved"})
 
 @file_bp.route("/file/reject/<int:version_id>", methods=["PUT"])
@@ -294,15 +244,18 @@ def reject(version_id):
     conn.close()
     return jsonify({"message": "Rejected"})
 
+# ✅ CORRECTED: Return user name instead of user_id
+@file_bp.route("/file/comments/<int:file_id>", methods=["GET"])
 @file_bp.route("/file/comments/<int:file_id>", methods=["GET"])
 def get_comments(file_id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("""
-        SELECT comment_text, user_id, created_at
-        FROM Comment
-        WHERE file_id = %s
-        ORDER BY created_at DESC
+        SELECT c.comment_text, u.name, c.created_at
+        FROM Comment c
+        JOIN User u ON c.user_id = u.user_id
+        WHERE c.file_id = %s
+        ORDER BY c.created_at DESC
     """, (file_id,))
     data = cursor.fetchall()
     cursor.close()
@@ -327,7 +280,6 @@ def approved_files(project_id):
 
 @file_bp.route("/test-imagekit", methods=["GET"])
 def test_imagekit():
-    """Test ImageKit credentials without uploading a file."""
     return jsonify({
         "private_key_exists": bool(IMAGEKIT_PRIVATE_KEY),
         "public_key_exists": bool(IMAGEKIT_PUBLIC_KEY),
@@ -336,7 +288,7 @@ def test_imagekit():
         "public_key_preview": IMAGEKIT_PUBLIC_KEY[:10] + "..." if IMAGEKIT_PUBLIC_KEY else None
     })
 
-# -------------------- IMAGEKIT UPLOAD ENDPOINTS (using direct REST API) --------------------
+# -------------------- REAL IMAGEKIT UPLOADS --------------------
 @file_bp.route("/upload-to-imagekit", methods=["POST"])
 def upload_to_imagekit_route():
     if 'file' not in request.files:
@@ -350,27 +302,28 @@ def upload_to_imagekit_route():
     if not folder_id or not uploaded_by:
         return jsonify({"error": "Missing folder_id or uploaded_by"}), 400
 
-    # Save file temporarily
     temp_path = os.path.join(UPLOAD_FOLDER, file.filename)
     file.save(temp_path)
 
     try:
         upload_data = upload_to_imagekit_rest(temp_path, file.filename)
 
-        # Store in local database
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
-                INSERT INTO File (file_name, file_type, folder_id)
-                VALUES (%s, %s, %s)
-            """, (file.filename, file.filename.split('.')[-1], folder_id))
+            # Insert File record
+            cursor.execute("INSERT INTO File (file_name, file_type, folder_id) VALUES (%s, %s, %s)",
+                           (file.filename, file.filename.split('.')[-1], folder_id))
             file_id = cursor.lastrowid
+
+            # Determine status based on user role
+            user_role = get_user_role(uploaded_by)
+            status = 'In-Process' if user_role == 'Employee' else 'Raw'
 
             cursor.execute("""
                 INSERT INTO File_Version (file_id, version_number, uploaded_by, status, file_size, imagekit_url)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (file_id, 1, uploaded_by, 'Raw', upload_data['size'], upload_data['url']))
+            """, (file_id, 1, uploaded_by, status, upload_data['size'], upload_data['url']))
 
             conn.commit()
         except Exception as e:

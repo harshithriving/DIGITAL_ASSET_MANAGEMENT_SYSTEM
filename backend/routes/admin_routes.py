@@ -70,3 +70,20 @@ def get_audit_logs():
     cursor.close()
     conn.close()
     return jsonify(logs)
+
+@admin_bp.route("/admin/test_rollback", methods=["POST"])
+def test_rollback():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        conn.start_transaction()
+        # Insert a duplicate project name (assuming project_name is unique)
+        cursor.execute("INSERT INTO Project (project_name, client_user_id) VALUES ('Duplicate Project', 4)")
+        cursor.execute("INSERT INTO Project (project_name, client_user_id) VALUES ('Duplicate Project', 5)")  # fails
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"success": False, "error": str(e), "message": "Transaction rolled back – no project was created"}), 400
+    finally:
+        cursor.close()
+        conn.close()

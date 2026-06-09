@@ -54,6 +54,7 @@ def add_comment():
     return jsonify({"message": "Comment added"})
 
 @pm_bp.route("/pm/assign_employee", methods=["POST"])
+@pm_bp.route("/pm/assign_employee", methods=["POST"])
 def assign_employee():
     data = request.json
     user_id = data.get("user_id")
@@ -63,7 +64,19 @@ def assign_employee():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
-        # Check current project count for this employee
+        conn.start_transaction()
+
+        # Check if employee already has permission for this project (to avoid duplicate assignment)
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM Permission perm
+            JOIN Folder f ON perm.folder_id = f.folder_id
+            WHERE perm.user_id = %s AND f.project_id = %s
+        """, (user_id, project_id))
+        if cursor.fetchone()['count'] > 0:
+            raise Exception("Employee is already assigned to this project.")
+
+        # Count current projects assigned to employee
         cursor.execute("""
             SELECT COUNT(DISTINCT p.project_id) as project_count
             FROM Project p
@@ -71,26 +84,28 @@ def assign_employee():
             JOIN Permission perm ON f.folder_id = perm.folder_id
             WHERE perm.user_id = %s
         """, (user_id,))
-        result = cursor.fetchone()
-        current_count = result['project_count'] if result else 0
+        current_count = cursor.fetchone()['project_count'] or 0
         
         if current_count >= 2:
-            return jsonify({"error": "Employee can only be assigned to maximum 2 projects"}), 400
+            raise Exception("Employee can only be assigned to a maximum of 2 projects.")
 
+        # Get root folder of the project
         cursor.execute("SELECT folder_id FROM Folder WHERE project_id = %s AND is_root = 1", (project_id,))
         root = cursor.fetchone()
         if not root:
-            return jsonify({"error": "Project has no root folder"}), 400
+            raise Exception("Project has no root folder")
         folder_id = root['folder_id']
 
+        # Insert permission
         cursor.execute("""
             INSERT INTO Permission (user_id, folder_id, granted_by, permission_type)
             VALUES (%s, %s, %s, 'Edit')
         """, (user_id, folder_id, granted_by))
+
         conn.commit()
     except Exception as e:
         conn.rollback()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 400
     finally:
         cursor.close()
         conn.close()
